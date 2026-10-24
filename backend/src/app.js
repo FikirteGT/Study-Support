@@ -3,6 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const db = require("./config/db");
+const assessmentRoutes = require("./routes/assessmentRoutes");
+const materialRoutes = require("./routes/materialRoutes");
 
 // Routes
 const agentRoutes = require("./routes/agentRoutes");
@@ -14,7 +16,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
-// Health check endpoint
+// Health check
 app.get("/health", async (req, res) => {
   try {
     const status = await db.checkConnection();
@@ -32,17 +34,10 @@ app.get("/health", async (req, res) => {
   }
 });
 
-// AI Agent routes (Tool 1 & Quiz Generation: /api/agent/prompt, /api/agent/assess)
-app.use("/api/agent", agentRoutes);
-
-// Material search and syllabus routes (Tool 1: /api/materials/search?query=...)
+// Tool 1: Material search & Course Materials
 app.use("/api/materials", materialRoutes);
 
-// Assessment scoring route (Tool 2: /api/assess)
-app.use("/api/assess", assessmentRoutes);
-
-// Fallback listing for materials
-app.get("/api/materials-list", async (req, res, next) => {
+app.get("/api/materials", async (req, res, next) => {
   try {
     const materials = await db.getMaterials();
     res.json(materials);
@@ -51,8 +46,12 @@ app.get("/api/materials-list", async (req, res, next) => {
   }
 });
 
-// Tool 3: Study plans persistence (supports both /api/study-plans and /api/plans as per SRS §6.1)
-const handleSaveStudyPlan = async (req, res, next) => {
+// Tool 2: check_assessment evaluation routes
+app.use("/api/assessment", assessmentRoutes);
+app.use("/api/assess", assessmentRoutes);
+
+// Tool 3: Study Plans (save, retrieve by ID, list all)
+app.post("/api/study-plans", async (req, res, next) => {
   try {
     const {
       confirmed,
@@ -93,7 +92,16 @@ const handleSaveStudyPlan = async (req, res, next) => {
   }
 };
 
-const handleGetStudyPlanById = async (req, res, next) => {
+app.get("/api/study-plans", async (req, res, next) => {
+  try {
+    const plans = await db.getAllPlans();
+    res.json(plans);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/study-plans/:id", async (req, res, next) => {
   try {
     const plan = await db.getPlanById(req.params.id);
 
@@ -114,6 +122,20 @@ app.get("/api/study-plans/:id", handleGetStudyPlanById);
 
 app.post("/api/plans", handleSaveStudyPlan);
 app.get("/api/plans/:id", handleGetStudyPlanById);
+
+// SRS alias compatibility (/api/plans)
+app.post("/api/plans", (req, res, next) => {
+  req.url = "/api/study-plans";
+  app.handle(req, res, next);
+});
+app.get("/api/plans", (req, res, next) => {
+  req.url = "/api/study-plans";
+  app.handle(req, res, next);
+});
+app.get("/api/plans/:id", (req, res, next) => {
+  req.url = `/api/study-plans/${req.params.id}`;
+  app.handle(req, res, next);
+});
 
 // Central error handler
 app.use((err, req, res, next) => {

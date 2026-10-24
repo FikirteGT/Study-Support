@@ -1,11 +1,16 @@
 
+const net = require("net");
+if (net.setDefaultAutoSelectFamily) {
+  net.setDefaultAutoSelectFamily(false);
+}
+
 const { Pool } = require("pg");
 
 const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
       ssl: { rejectUnauthorized: false },
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 15000,
     })
   : null;
 
@@ -97,6 +102,14 @@ async function insertPlan(planData) {
     return plan;
   }
 
+  // Ensure student exists in students table to satisfy foreign key constraint
+  await query(
+    `INSERT INTO students (id, name)
+     VALUES ($1, $2)
+     ON CONFLICT (id) DO NOTHING`,
+    [student_id, student_name]
+  ).catch(() => {});
+
   const result = await query(
     `INSERT INTO study_plans
        (student_id, student_name, topic, score, total_questions,
@@ -130,6 +143,20 @@ async function getPlanById(id) {
   return result.rows[0] || null;
 }
 
+async function getAllPlans() {
+  if (!pool) {
+    return Array.from(memoryPlans.values()).sort(
+      (a, b) => new Date(b.created_at) - new Date(a.created_at)
+    );
+  }
+
+  const result = await query(
+    "SELECT * FROM study_plans ORDER BY created_at DESC LIMIT 50"
+  );
+
+  return result.rows;
+}
+
 async function checkConnection() {
   if (!pool) {
     console.log("Database is not configured.");
@@ -159,6 +186,7 @@ module.exports = {
   getMaterials,
   insertPlan,
   getPlanById,
+  getAllPlans,
   checkConnection,
   closePool,
 };

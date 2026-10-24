@@ -53,16 +53,14 @@ const demoSections = [
   }
 ];
 
-const demoMaterials = demoSections;
-
 function getSectionById(id) {
-  return demoSections.find((s) => s.id === id);
+  return demoSections.find((s) => s.id === id || s.number === Number(id)) || null;
 }
 
 module.exports = {
   demoCourse,
   studentProfile,
   demoSections,
-  demoMaterials,
+  demoMaterials: demoSections,
   getSectionById
 };
