@@ -46,14 +46,14 @@ function stem(w) {
 const normalize = (text) => tokenize(text).map(stem).join(" ");
 
 // Pre-compute an index per section: single keywords, phrases, and distinctive title words.
-const INDEX = demoMaterials.map((s) => {
+const INDEX = (demoMaterials || []).map((s) => {
   const singles = new Set();
   const phrases = new Set();
-  for (const k of s.keywords) {
+  for (const k of (s.keywords || [])) {
     const n = normalize(k);
     (n.includes(" ") ? phrases : singles).add(n);
   }
-  for (const c of s.key_concepts) {
+  for (const c of (s.key_concepts || [])) {
     const n = normalize(c);
     if (n.includes(" ")) phrases.add(n);
   }
