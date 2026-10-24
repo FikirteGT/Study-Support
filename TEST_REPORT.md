@@ -174,3 +174,14 @@
    - Verified that all flows terminate within $\le 3$ tool calls. Both TC-04 and TC-05 halt cleanly at step 1.
 4. **Deterministic Evaluation (SRS §3 / FR-3.2)**:
    - Scores are computed purely in application JavaScript, guaranteeing absolute numerical precision with zero LLM hallucination.
+
+---
+
+## 4. Known Limitations
+
+* **Render Free-Tier Cold Starts**: On the Render free instance, inactive backend services spin down after 15 minutes of inactivity; the initial wake-up request can take 15–30 seconds.
+* **Shared Gemini Free-Tier Quota**: Gemini 1.5 Flash free tier operates under shared project rate limits (15 RPM / 1M TPM); rapid consecutive queries may encounter temporary rate limit throttling.
+* **Focused Demo Syllabus Scope**: The course curriculum is intentionally constrained to 3 foundational CS101 Python modules (`SEC-PY-101`, `SEC-PY-102`, `SEC-PY-103`) to ensure high factual precision and predictable retrieval.
+* **Single Student Profile Baseline**: The system demonstrates user tracking and persistence using a designated student profile (`Jordan Lee`, ID `PY-2026-01`) without an external authentication provider.
+* **LLM Question Generation Dynamic Variance**: While assessment questions are strictly grounded in course sections, minor variations in question phrasing depend on LLM generation; scoring remains 100% deterministic in application code.
+
