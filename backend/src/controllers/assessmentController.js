@@ -42,6 +42,7 @@ const processAssessment = (req, res) => {
     return res.status(200).json({
       quizId,
       topic,
+      activities: toolOutput.proposedActivities,
       ...toolOutput
     });
   } catch (error) {

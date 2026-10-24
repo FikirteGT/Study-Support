@@ -6,6 +6,11 @@ const db = require("./config/db");
 const assessmentRoutes = require("./routes/assessmentRoutes");
 const materialRoutes = require("./routes/materialRoutes");
 
+// Routes
+const agentRoutes = require("./routes/agentRoutes");
+const materialRoutes = require("./routes/materialRoutes");
+const assessmentRoutes = require("./routes/assessmentRoutes");
+
 const app = express();
 
 app.use(cors());
@@ -15,11 +20,11 @@ app.use(express.json({ limit: "1mb" }));
 app.get("/health", async (req, res) => {
   try {
     const status = await db.checkConnection();
-
     res.json({
       status: "ok",
       database: status.mode,
       connected: status.connected,
+      geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== "")
     });
   } catch (error) {
     res.status(503).json({
@@ -59,7 +64,7 @@ app.post("/api/study-plans", async (req, res, next) => {
       references,
     } = req.body;
 
-    // Never save a proposed plan without explicit confirmation.
+    // Strict Confirmation Guard (FR-5.3, Tool 3)
     if (confirmed !== true) {
       return res.status(400).json({
         error: "Confirmation is required before saving the study plan.",
@@ -67,23 +72,25 @@ app.post("/api/study-plans", async (req, res, next) => {
     }
 
     const plan = await db.insertPlan({
-      student_id: studentId,
-      student_name: studentName,
-      topic,
-      score,
+      student_id: studentId || "PY-2026-01",
+      student_name: studentName || "Jordan Lee",
+      topic: topic || "Python Syllabus Assessment",
+      score: typeof score === "number" ? score : 0,
       total_questions: totalQuestions,
-      activities,
-      section_references: references,
+      activities: activities || [],
+      section_references: references || [],
     });
 
     res.status(201).json({
       message: "Study plan saved successfully.",
+      planId: plan.id,
+      timestamp: plan.created_at || new Date().toISOString(),
       plan,
     });
   } catch (error) {
     next(error);
   }
-});
+};
 
 app.get("/api/study-plans", async (req, res, next) => {
   try {
@@ -108,7 +115,13 @@ app.get("/api/study-plans/:id", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+};
+
+app.post("/api/study-plans", handleSaveStudyPlan);
+app.get("/api/study-plans/:id", handleGetStudyPlanById);
+
+app.post("/api/plans", handleSaveStudyPlan);
+app.get("/api/plans/:id", handleGetStudyPlanById);
 
 // SRS alias compatibility (/api/plans)
 app.post("/api/plans", (req, res, next) => {
@@ -126,10 +139,11 @@ app.get("/api/plans/:id", (req, res, next) => {
 
 // Central error handler
 app.use((err, req, res, next) => {
-  console.error(err.message);
+  console.error("[Server Error]", err.message);
 
   res.status(500).json({
     error: "An unexpected server error occurred.",
+    details: err.message
   });
 });
 

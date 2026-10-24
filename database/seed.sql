@@ -3,6 +3,11 @@ VALUES (
     'STU_101',
     'Alex Kim',
     'alex.kim@university.edu'
+),
+(
+    'PY-2026-01',
+    'Jordan Lee',
+    'jordan.lee@university.edu'
 )
 ON CONFLICT (id) DO NOTHING;
 
