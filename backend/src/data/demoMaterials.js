@@ -1,17 +1,17 @@
-export const demoCourse = {
+const demoCourse = {
   code: "CS101",
   name: "Introduction to Python Programming",
   description: "Foundational Python programming course covering core syntax, data structures, functional control flow, and object-oriented fundamentals."
 };
 
-export const studentProfile = {
+const studentProfile = {
   id: "PY-2026-01",
   name: "Jordan Lee",
   semester: "Fall 2026",
   enrolledCourse: "CS101: Introduction to Python Programming"
 };
 
-export const demoSections = [
+const demoSections = [
   {
     id: "SEC-PY-101",
     number: 1,
@@ -52,3 +52,17 @@ export const demoSections = [
     ]
   }
 ];
+
+const demoMaterials = demoSections;
+
+function getSectionById(id) {
+  return demoSections.find((s) => s.id === id);
+}
+
+module.exports = {
+  demoCourse,
+  studentProfile,
+  demoSections,
+  demoMaterials,
+  getSectionById
+};
