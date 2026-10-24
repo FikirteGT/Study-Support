@@ -114,24 +114,13 @@ export default function App() {
   const [studyPlan, setStudyPlan] = useState(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
 
-  // Persistence state (Tool 3)
+  // Persistence state
   const [savedPlans, setSavedPlans] = useState([]);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
   const [reopenedPlanModal, setReopenedPlanModal] = useState(null);
 
   // Course materials
   const [courseMaterials, setCourseMaterials] = useState([]);
-
-  // Inspector Logs
-  const [inspectorLogs, setInspectorLogs] = useState([]);
-  const [isInspectorOpen, setIsInspectorOpen] = useState(false);
-
-  const logInspector = (toolName, payload, response) => {
-    setInspectorLogs(prev => [
-      { toolName, payload, response, time: new Date().toLocaleTimeString() },
-      ...prev
-    ]);
-  };
 
   // Check health and load initial data
   useEffect(() => {
@@ -187,7 +176,6 @@ export default function App() {
     try {
       // First attempt: Call AI Agent loop with Gemini-powered dynamic 3-MCQ generation
       const data = await promptAgent(queryToSearch);
-      logInspector('agent_prompt', { query: queryToSearch }, data);
 
       if (data.status === 'clarification_needed') {
         setClarificationPrompt(data.message);
@@ -202,7 +190,6 @@ export default function App() {
         if (data.questions && data.questions.length > 0) {
           setQuizData(data.questions);
           setUserAnswers({});
-          logInspector('gemini_quiz_generated', { section: data.section?.id }, { count: data.questions.length });
         } else {
           buildQuizForSection(data.section?.id || "SEC-PY-101");
         }
@@ -211,7 +198,6 @@ export default function App() {
       console.warn("Agent prompt failed, attempting direct search_material fallback:", agentErr);
       try {
         const data = await searchMaterial(queryToSearch);
-        logInspector('search_material_fallback', { query: queryToSearch }, data);
 
         if (data.status === 'clarification_needed') {
           setClarificationPrompt(data.message);
@@ -226,7 +212,7 @@ export default function App() {
           buildQuizForSection(primarySecId);
         }
       } catch (err) {
-        setScopeWarning(`Error connecting to backend (${API_BASE}): ${err.message}. Make sure backend is running.`);
+        setScopeWarning(`Error connecting to backend (${API_BASE}): ${err.message}.`);
       }
     } finally {
       setIsSearching(false);
@@ -237,7 +223,6 @@ export default function App() {
     const questions = QUESTION_BANK[sectionId] || QUESTION_BANK["SEC-PY-101"];
     setQuizData(questions);
     setUserAnswers({});
-    logInspector('generate_quiz_fallback', { sectionId }, { questionsCount: questions.length });
   };
 
   const handleOptionSelect = (qId, optionText) => {
@@ -263,12 +248,11 @@ export default function App() {
 
     try {
       const data = await evaluateAssessment(payload);
-      logInspector('check_assessment', payload, data);
 
       setScoreResult(data);
       setStudyPlan(data.proposedActivities || []);
     } catch (err) {
-      alert("Error evaluating assessment via backend: " + err.message);
+      alert("Error evaluating assessment: " + err.message);
     } finally {
       setIsEvaluating(false);
     }
@@ -292,12 +276,11 @@ export default function App() {
 
     try {
       const data = await saveStudyPlan(payload);
-      logInspector('save_study_plan', payload, data);
 
-      alert(`Study Plan Successfully Saved to PostgreSQL!\nPlan ID: ${data.plan.id}`);
+      alert(`Study Plan Successfully Saved!`);
       fetchSavedPlans();
     } catch (err) {
-      alert("Failed to save study plan to database: " + err.message);
+      alert("Failed to save study plan: " + err.message);
     } finally {
       setIsSavingPlan(false);
     }
@@ -307,7 +290,6 @@ export default function App() {
   const handleReopenPlan = async (id) => {
     try {
       const data = await getStudyPlanById(id);
-      logInspector('reopen_study_plan', { id }, data);
       setReopenedPlanModal(data);
     } catch (err) {
       alert("Error reopening plan: " + err.message);
@@ -419,24 +401,15 @@ export default function App() {
           </div>
 
           <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
-            <button 
-              onClick={() => setIsInspectorOpen(true)}
-              className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-200 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl font-semibold hover:bg-indigo-100 transition flex items-center space-x-1 sm:space-x-1.5"
-            >
-              <span>🔍</span>
-              <span className="hidden sm:inline">Backend Tool </span>
-              <span>Inspector</span>
-            </button>
-
             {backendStatus.connected ? (
               <span className="text-[10px] sm:text-xs px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full font-bold whitespace-nowrap flex items-center space-x-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Live API ({backendStatus.mode})</span>
+                <span>Active</span>
               </span>
             ) : (
-              <span className="text-[10px] sm:text-xs px-2.5 py-1 bg-amber-100 text-amber-800 rounded-full font-bold whitespace-nowrap flex items-center space-x-1.5" title="Backend not reachable on port 5000">
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-                <span>Connecting to :5000...</span>
+              <span className="text-[10px] sm:text-xs px-2.5 py-1 bg-slate-200 text-slate-700 rounded-full font-medium whitespace-nowrap flex items-center space-x-1.5">
+                <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                <span>Connecting...</span>
               </span>
             )}
           </div>
@@ -444,33 +417,17 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8">
 
-          {/* Offline Banner Warning if backend server is not running */}
-          {!backendStatus.connected && !backendStatus.checking && (
-            <div className="mb-6 p-4 bg-amber-50 border border-amber-300 rounded-2xl flex items-center justify-between text-xs text-amber-900 shadow-xs">
-              <div className="flex items-center space-x-3">
-                <span className="text-xl">⚠️</span>
-                <div>
-                  <p className="font-bold">Backend API on port 5000 is not detected.</p>
-                  <p className="text-amber-700">Please ensure the backend is running by executing: <code className="bg-amber-200/60 px-2 py-0.5 rounded font-mono font-bold">npm run start</code> inside the <code className="font-mono">backend</code> directory.</p>
-                </div>
-              </div>
-              <button onClick={checkHealth} className="bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold px-3 py-1.5 rounded-lg shrink-0 transition">
-                Retry Connection
-              </button>
-            </div>
-          )}
-
           {/* WELCOME PAGE */}
           {activeTab === 'Welcome' && (
             <div className="max-w-4xl mx-auto space-y-6">
               <div className="relative bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white rounded-2xl p-5 sm:p-8 shadow-xl overflow-hidden flex flex-col md:flex-row items-center justify-between gap-6">
                 <div className="space-y-3 z-10 w-full md:w-auto">
                   <span className="inline-block bg-indigo-500/30 text-indigo-200 text-[10px] font-bold px-3 py-1 rounded-md uppercase tracking-wider">
-                    Academic Support Agent Active
+                    Academic Support Active
                   </span>
                   <h3 className="text-xl sm:text-2xl font-black">Hello, {STUDENT_PROFILE.name}!</h3>
                   <p className="text-xs text-indigo-100 max-w-lg leading-relaxed">
-                    Your AI Academic Support Agent assesses your understanding of Python programming topics, evaluates quizzes with pure application code, and generates customized study plans saved securely in remote PostgreSQL.
+                    Your AI Study Support Tutor assesses your understanding of Python programming topics, evaluates quizzes with instant feedback, and formulates tailored study plans.
                   </p>
                   <button 
                     onClick={() => setActiveTab('AI Tutor')}
@@ -486,19 +443,19 @@ export default function App() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
                 <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2">
-                  <div className="text-indigo-600 text-xl font-bold">📄 01. Material Search</div>
-                  <h4 className="font-bold text-sm text-slate-900">search_material</h4>
-                  <p className="text-xs text-slate-500">Searches syllabus modules with ambiguity clarification and out-of-scope boundaries.</p>
+                  <div className="text-indigo-600 text-xl font-bold">📄 Topic Search</div>
+                  <h4 className="font-bold text-sm text-slate-900">Explore Syllabus</h4>
+                  <p className="text-xs text-slate-500">Search Python course modules and identify key concepts to assess.</p>
                 </div>
                 <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2">
-                  <div className="text-indigo-600 text-xl font-bold">📝 02. Assessment Tool</div>
-                  <h4 className="font-bold text-sm text-slate-900">check_assessment</h4>
-                  <p className="text-xs text-slate-500">Scores quizzes deterministically in application code (0-3) and formulates remedial or mastery activities.</p>
+                  <div className="text-indigo-600 text-xl font-bold">📝 Knowledge Quizzes</div>
+                  <h4 className="font-bold text-sm text-slate-900">Test Understanding</h4>
+                  <p className="text-xs text-slate-500">Answer 3 grounded multiple-choice questions with instant scoring.</p>
                 </div>
                 <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2 sm:col-span-2 md:col-span-1">
-                  <div className="text-indigo-600 text-xl font-bold">🎯 03. Plan Persistence</div>
-                  <h4 className="font-bold text-sm text-slate-900">save_study_plan</h4>
-                  <p className="text-xs text-slate-500">Explicit confirmation gate before persisting study plans to remote PostgreSQL.</p>
+                  <div className="text-indigo-600 text-xl font-bold">🎯 Tailored Study Plan</div>
+                  <h4 className="font-bold text-sm text-slate-900">Master Concepts</h4>
+                  <p className="text-xs text-slate-500">Receive customized remedial or mastery activities to level up your Python skills.</p>
                 </div>
               </div>
             </div>
@@ -512,7 +469,6 @@ export default function App() {
               <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm sm:text-base font-bold text-slate-900">1. Select Course Topic</h3>
-                  <span className="text-xs text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded font-mono">Tool 1: search_material</span>
                 </div>
 
                 <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 mb-4">
@@ -538,7 +494,7 @@ export default function App() {
                     <div className="flex items-start space-x-2">
                       <span className="shrink-0 text-base">💡</span>
                       <div>
-                        <p className="font-bold mb-1">Clarification Requested by AI Tutor (FR-1.2):</p>
+                        <p className="font-bold mb-1">Clarification Requested:</p>
                         <p>{clarificationPrompt}</p>
                       </div>
                     </div>
@@ -567,7 +523,7 @@ export default function App() {
                   <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 mb-4 flex items-start space-x-2">
                     <span className="shrink-0 text-base">⚠️</span>
                     <div>
-                      <p className="font-bold mb-1">Topic Outside Syllabus (FR-1.3 / TC-05):</p>
+                      <p className="font-bold mb-1">Topic Outside Syllabus:</p>
                       <p>{scopeWarning}</p>
                     </div>
                   </div>
@@ -597,7 +553,6 @@ export default function App() {
                       <h3 className="text-sm sm:text-base font-bold text-slate-900">2. Knowledge Assessment Quiz</h3>
                       <p className="text-xs text-slate-500">3 Multiple Choice Questions Grounded in Syllabus</p>
                     </div>
-                    <span className="text-xs text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded font-mono">Tool 2: check_assessment</span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -633,7 +588,7 @@ export default function App() {
                     disabled={isEvaluating}
                     className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white py-3 rounded-xl text-sm font-semibold transition shadow-md"
                   >
-                    {isEvaluating ? "Evaluating Assessment in Application Code..." : "Submit Quiz & Calculate Results"}
+                    {isEvaluating ? "Evaluating Assessment..." : "Submit Quiz & Calculate Results"}
                   </button>
                 </div>
               )}
@@ -672,17 +627,17 @@ export default function App() {
                     ))}
                   </div>
 
-                  {/* Confirmation Gate before DB write (FR-5) */}
+                  {/* Confirmation Gate before DB write */}
                   <div className="pt-2 flex flex-col sm:flex-row justify-between items-center gap-3 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">
                     <p className="text-xs text-slate-600">
-                      <strong>Confirmation Guard (FR-5.2):</strong> Click approve to save this study plan to remote PostgreSQL.
+                      Save this tailored study plan to your profile to track your academic progress.
                     </p>
                     <button 
                       onClick={handleSavePlan} 
                       disabled={isSavingPlan}
                       className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white px-6 py-2.5 rounded-xl text-xs font-bold transition shadow-md shrink-0"
                     >
-                      {isSavingPlan ? "Persisting to PostgreSQL..." : "Approve & Save Study Plan ➔"}
+                      {isSavingPlan ? "Saving Study Plan..." : "Save Study Plan ➔"}
                     </button>
                   </div>
                 </div>
@@ -829,13 +784,13 @@ export default function App() {
             </div>
           )}
 
-          {/* STUDY PLANS (Reopen from Remote PostgreSQL - FR-6) */}
+          {/* STUDY PLANS */}
           {activeTab === 'Study Plans' && (
             <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
               <div className="flex justify-between items-center border-b pb-3 border-slate-100">
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">Confirmed Study Plans (Remote PostgreSQL)</h3>
-                  <p className="text-xs text-slate-500">Reopen and review plans persisted in Neon database (FR-6.2).</p>
+                  <h3 className="text-base font-bold text-slate-900">Saved Study Plans</h3>
+                  <p className="text-xs text-slate-500">Reopen and review your personalized study plans.</p>
                 </div>
                 <div className="flex items-center space-x-2">
                   <button onClick={fetchSavedPlans} className="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1 rounded-md font-semibold text-slate-700">
@@ -847,8 +802,8 @@ export default function App() {
 
               {savedPlans.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl text-xs space-y-2">
-                  <p>No study plans found in database.</p>
-                  <p>Go to <strong className="text-indigo-600 cursor-pointer" onClick={() => setActiveTab('AI Tutor')}>AI Tutor</strong> to complete an assessment and approve a study plan.</p>
+                  <p>No study plans saved yet.</p>
+                  <p>Go to <strong className="text-indigo-600 cursor-pointer" onClick={() => setActiveTab('AI Tutor')}>AI Tutor</strong> to complete an assessment and save a study plan.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -881,13 +836,13 @@ export default function App() {
         </main>
       </div>
 
-      {/* REOPENED PLAN MODAL (FR-6.3) */}
+      {/* REOPENED PLAN MODAL */}
       {reopenedPlanModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 z-50">
           <div className="bg-white text-slate-900 w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl p-6 shadow-2xl border border-slate-200 space-y-4 overflow-y-auto">
             <div className="flex items-center justify-between border-b pb-3 border-slate-200">
               <div>
-                <h3 className="font-bold text-base text-slate-900">Reopened Study Plan (PostgreSQL Record)</h3>
+                <h3 className="font-bold text-base text-slate-900">Saved Study Plan</h3>
                 <p className="text-xs text-slate-400 font-mono">Plan ID: {reopenedPlanModal.id}</p>
               </div>
               <button onClick={() => setReopenedPlanModal(null)} className="text-slate-400 hover:text-slate-800 text-xl font-bold p-1">&times;</button>
@@ -919,34 +874,6 @@ export default function App() {
               <button onClick={() => setReopenedPlanModal(null)} className="bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2 rounded-xl text-xs font-semibold">
                 Close
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* INSPECTOR MODAL */}
-      {isInspectorOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 z-50">
-          <div className="bg-slate-900 text-slate-200 w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl p-4 sm:p-6 shadow-2xl border border-slate-800">
-            <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3 shrink-0">
-              <h3 className="font-mono text-sm font-bold text-indigo-400 flex items-center space-x-1.5">
-                <span>⚙️</span>
-                <span>Live Backend Tool Inspector</span>
-              </h3>
-              <button onClick={() => setIsInspectorOpen(false)} className="text-slate-400 hover:text-white font-bold text-xl p-1 focus:outline-none">&times;</button>
-            </div>
-            <div className="font-mono text-[11px] sm:text-xs space-y-2 max-h-[60vh] overflow-y-auto bg-slate-950 p-3 sm:p-4 rounded-xl border border-slate-800 break-words whitespace-pre-wrap">
-              {inspectorLogs.length === 0 ? (
-                <p className="text-slate-500">// System ready. Interact with AI Tutor to test live backend tool calls...</p>
-              ) : (
-                inspectorLogs.map((log, idx) => (
-                  <div key={idx} className="border-b border-slate-900 pb-2">
-                    <span className="text-emerald-400">[{log.time}] [TOOL CALL]</span> <strong className="text-white">{log.toolName}</strong><br />
-                    <span className="text-slate-400">Payload:</span> {JSON.stringify(log.payload)}<br />
-                    <span className="text-indigo-300">Response:</span> {JSON.stringify(log.response)}
-                  </div>
-                ))
-              )}
             </div>
           </div>
         </div>
