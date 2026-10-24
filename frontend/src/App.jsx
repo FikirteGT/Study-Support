@@ -30,6 +30,7 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('••••••••');
   
   const [activeTab, setActiveTab] = useState('Welcome');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   const [topic, setTopic] = useState('Python Lists');
   const [matchingSections, setMatchingSections] = useState([DEMO_TEACHING_MATERIAL[0]]);
@@ -172,11 +173,11 @@ export default function App() {
   // LOGIN PAGE
   if (authStage === 'login') {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 font-sans">
-        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-2xl p-8 shadow-2xl space-y-6">
+      <div className="min-h-screen min-h-[100dvh] bg-slate-900 flex items-center justify-center p-4 sm:p-6 font-sans">
+        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-2xl p-6 sm:p-8 shadow-2xl space-y-6">
           <div className="text-center space-y-2">
             <div className="inline-flex bg-indigo-600 text-white p-3 rounded-2xl text-2xl font-bold shadow-lg shadow-indigo-500/30">🎓</div>
-            <h1 className="text-xl font-bold text-white tracking-wide">ACADEMIC SUPPORT PORTAL</h1>
+            <h1 className="text-lg sm:text-xl font-bold text-white tracking-wide">ACADEMIC SUPPORT PORTAL</h1>
             <p className="text-xs text-slate-400">Sign in to your student workspace</p>
           </div>
 
@@ -216,24 +217,47 @@ export default function App() {
 
   // MAIN PORTAL
   return (
-    <div className="flex h-screen bg-slate-100 font-sans text-slate-900 overflow-hidden">
+    <div className="flex h-screen h-[100dvh] bg-slate-100 font-sans text-slate-900 overflow-hidden relative">
       
-      {/* SIDEBAR NAVIGATION */}
-      <aside className="w-64 bg-slate-900 text-white flex flex-col justify-between p-4 shadow-xl shrink-0">
+      {/* MOBILE BACKDROP OVERLAY */}
+      {isMobileMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-40 md:hidden transition-opacity"
+          onClick={() => setIsMobileMenuOpen(false)}
+          aria-label="Close navigation overlay"
+        />
+      )}
+
+      {/* SIDEBAR NAVIGATION (Desktop static, Mobile slide-over drawer) */}
+      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-72 md:w-64 bg-slate-900 text-white flex flex-col justify-between p-4 shadow-2xl md:shadow-xl shrink-0 transition-transform duration-300 ease-in-out ${
+        isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+      }`}>
         <div>
-          <div className="flex items-center space-x-3 px-3 py-4 mb-4 border-b border-slate-800">
-            <div className="bg-indigo-600 text-white p-2 rounded-xl text-base font-bold">🎓</div>
-            <div>
-              <h1 className="font-extrabold text-xs tracking-wider">STUDY PLATFORM</h1>
-              <p className="text-[10px] text-indigo-400 font-medium">Academic Support Agent</p>
+          <div className="flex items-center justify-between px-3 py-4 mb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3">
+              <div className="bg-indigo-600 text-white p-2 rounded-xl text-base font-bold shadow-sm">🎓</div>
+              <div>
+                <h1 className="font-extrabold text-xs tracking-wider">STUDY PLATFORM</h1>
+                <p className="text-[10px] text-indigo-400 font-medium">Academic Support Agent</p>
+              </div>
             </div>
+            <button 
+              onClick={() => setIsMobileMenuOpen(false)} 
+              className="md:hidden text-slate-400 hover:text-white p-1 rounded-lg text-lg focus:outline-none"
+              aria-label="Close navigation"
+            >
+              ✕
+            </button>
           </div>
 
           <nav className="space-y-1">
             {navItems.map((item) => (
               <button
                 key={item.name}
-                onClick={() => setActiveTab(item.name)}
+                onClick={() => {
+                  setActiveTab(item.name);
+                  setIsMobileMenuOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
                   activeTab === item.name 
                     ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' 
@@ -249,16 +273,16 @@ export default function App() {
           </nav>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2 pt-4 border-t border-slate-800/80">
           <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/50 flex items-center space-x-3">
             <img 
               src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80" 
               alt="Student Avatar" 
-              className="w-9 h-9 rounded-full object-cover border-2 border-indigo-500"
+              className="w-9 h-9 rounded-full object-cover border-2 border-indigo-500 shrink-0"
             />
-            <div className="overflow-hidden">
+            <div className="overflow-hidden min-w-0">
               <p className="text-xs font-bold text-white truncate">Alex Kim</p>
-              <p className="text-[10px] text-slate-400 font-mono">ID: STU_101</p>
+              <p className="text-[10px] text-slate-400 font-mono truncate">ID: STU_101</p>
             </div>
           </div>
           <button 
@@ -274,40 +298,53 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         
         {/* Header */}
-        <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-xs">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">{activeTab}</h2>
-            <p className="text-xs text-slate-500">Professional Academic Support Portal</p>
+        <header className="bg-white border-b border-slate-200 px-4 py-3 sm:px-6 md:px-8 sm:py-4 flex items-center justify-between shadow-xs gap-3">
+          <div className="flex items-center space-x-3 min-w-0">
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="md:hidden p-2 -ml-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg focus:outline-none shrink-0"
+              aria-label="Open sidebar menu"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <div className="min-w-0">
+              <h2 className="text-base sm:text-lg font-bold text-slate-900 truncate">{activeTab}</h2>
+              <p className="text-[11px] sm:text-xs text-slate-500 hidden sm:block truncate">Professional Academic Support Portal</p>
+            </div>
           </div>
-          <div className="flex items-center space-x-3">
+
+          <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
             <button 
               onClick={() => setIsInspectorOpen(true)}
-              className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-200 px-3 py-2 rounded-xl font-semibold hover:bg-indigo-100 transition flex items-center space-x-1.5"
+              className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-200 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl font-semibold hover:bg-indigo-100 transition flex items-center space-x-1 sm:space-x-1.5"
             >
               <span>🔍</span>
-              <span>Backend Tool Call Inspector</span>
+              <span className="hidden sm:inline">Backend Tool </span>
+              <span>Inspector</span>
             </button>
-            <span className="text-xs px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full font-bold">● Connected</span>
+            <span className="text-[10px] sm:text-xs px-2 py-0.5 sm:px-2.5 sm:py-1 bg-emerald-100 text-emerald-800 rounded-full font-bold whitespace-nowrap">● Connected</span>
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-8">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8">
 
           {/* WELCOME PAGE */}
           {activeTab === 'Welcome' && (
             <div className="max-w-4xl mx-auto space-y-6">
-              <div className="relative bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white rounded-2xl p-8 shadow-xl overflow-hidden flex flex-col md:flex-row items-center justify-between gap-6">
-                <div className="space-y-3 z-10">
-                  <span className="bg-indigo-500/30 text-indigo-200 text-[10px] font-bold px-3 py-1 rounded-md uppercase tracking-wider">
+              <div className="relative bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white rounded-2xl p-5 sm:p-8 shadow-xl overflow-hidden flex flex-col md:flex-row items-center justify-between gap-6">
+                <div className="space-y-3 z-10 w-full md:w-auto">
+                  <span className="inline-block bg-indigo-500/30 text-indigo-200 text-[10px] font-bold px-3 py-1 rounded-md uppercase tracking-wider">
                     Welcome to Your Portal
                   </span>
-                  <h3 className="text-2xl font-black">Hello, Alex Kim!</h3>
+                  <h3 className="text-xl sm:text-2xl font-black">Hello, Alex Kim!</h3>
                   <p className="text-xs text-indigo-100 max-w-lg leading-relaxed">
                     Your AI Academic Support Agent is ready to evaluate your knowledge on course topics, generate targeted quizzes, and build personalized study plans based on team demo materials.
                   </p>
                   <button 
                     onClick={() => setActiveTab('AI Tutor')}
-                    className="bg-white text-indigo-900 hover:bg-indigo-50 px-5 py-2.5 rounded-xl text-xs font-bold transition shadow-md"
+                    className="w-full sm:w-auto bg-white text-indigo-900 hover:bg-indigo-50 px-5 py-2.5 rounded-xl text-xs font-bold transition shadow-md"
                   >
                     Start AI Assessment ➔
                   </button>
@@ -315,22 +352,22 @@ export default function App() {
                 <img 
                   src="https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=400&auto=format&fit=crop&q=80" 
                   alt="Welcome Hero" 
-                  className="w-48 h-36 object-cover rounded-xl shadow-lg border border-indigo-400/30 z-10"
+                  className="w-full max-w-xs md:w-48 h-36 object-cover rounded-xl shadow-lg border border-indigo-400/30 z-10 shrink-0"
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
+                <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2">
                   <div className="text-indigo-600 text-xl font-bold">📄 01</div>
                   <h4 className="font-bold text-sm text-slate-900">Material Search</h4>
                   <p className="text-xs text-slate-500">Scan verified demo sections with intelligent scope boundary enforcement.</p>
                 </div>
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2">
                   <div className="text-indigo-600 text-xl font-bold">📝 02</div>
                   <h4 className="font-bold text-sm text-slate-900">Assessment & Scoring</h4>
                   <p className="text-xs text-slate-500">Take 3-question MCQ quizzes with instant app-code grading logic.</p>
                 </div>
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2 sm:col-span-2 md:col-span-1">
                   <div className="text-indigo-600 text-xl font-bold">🎯 03</div>
                   <h4 className="font-bold text-sm text-slate-900">Study Plans</h4>
                   <p className="text-xs text-slate-500">Generate, confirm, and securely persist customized study plans.</p>
@@ -344,21 +381,21 @@ export default function App() {
             <div className="max-w-5xl mx-auto space-y-6">
               
               {/* Step 1: Topic Input */}
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+              <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-base font-bold text-slate-900">1. Select Course Topic</h3>
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900">1. Select Course Topic</h3>
                   <span className="text-xs text-slate-400 font-mono">search_material</span>
                 </div>
 
-                <form onSubmit={handleSearch} className="flex gap-3 mb-4">
+                <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 mb-4">
                   <input 
                     type="text" 
                     value={topic}
                     onChange={(e) => setTopic(e.target.value)}
                     placeholder="e.g., Python Lists, Tuples, Dictionaries" 
-                    className="flex-1 px-4 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                    className="w-full flex-1 px-4 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-600 bg-white"
                   />
-                  <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-sm font-semibold transition shadow-md">
+                  <button type="submit" className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-sm font-semibold transition shadow-md shrink-0">
                     Search Topic
                   </button>
                 </form>
@@ -366,7 +403,7 @@ export default function App() {
                 {/* Clarification prompt for ambiguous topic */}
                 {clarificationPrompt && (
                   <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 mb-4 flex items-start space-x-2">
-                    <span>💡</span>
+                    <span className="shrink-0 text-base">💡</span>
                     <div>
                       <p className="font-bold mb-1">Clarification Requested by AI Tutor:</p>
                       <p>{clarificationPrompt}</p>
@@ -377,7 +414,7 @@ export default function App() {
                 {/* Out of scope warning */}
                 {scopeWarning && (
                   <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 mb-4 flex items-start space-x-2">
-                    <span>⚠️</span>
+                    <span className="shrink-0 text-base">⚠️</span>
                     <div>
                       <p className="font-bold mb-1">Topic Outside Demo Material:</p>
                       <p>{scopeWarning}</p>
@@ -386,11 +423,11 @@ export default function App() {
                 )}
 
                 {matchingSections.length > 0 && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                     {matchingSections.map(sec => (
                       <div key={sec.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex space-x-3 items-center">
-                        <img src={sec.image} alt={sec.title} className="w-10 h-10 rounded-lg object-cover" />
-                        <div className="overflow-hidden">
+                        <img src={sec.image} alt={sec.title} className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                        <div className="overflow-hidden min-w-0">
                           <p className="font-bold text-xs text-slate-900 truncate">{sec.title}</p>
                           <span className="text-[10px] text-indigo-600 font-mono font-semibold">{sec.id}</span>
                         </div>
@@ -402,9 +439,9 @@ export default function App() {
 
               {/* Step 2: Interactive Quiz */}
               {quizData && (
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
                   <div className="flex items-center justify-between border-b pb-3 border-slate-100">
-                    <h3 className="text-base font-bold text-slate-900">2. Knowledge Assessment Quiz</h3>
+                    <h3 className="text-sm sm:text-base font-bold text-slate-900">2. Knowledge Assessment Quiz</h3>
                     <span className="text-xs text-slate-400 font-mono">check_assessment</span>
                   </div>
 
@@ -415,15 +452,15 @@ export default function App() {
                           <p className="font-semibold text-xs text-slate-900 mb-2">{idx + 1}. {q.question}</p>
                           <div className="space-y-1.5">
                             {q.options.map((opt, oIdx) => (
-                              <label key={oIdx} className="flex items-center space-x-2 text-xs cursor-pointer p-1.5 rounded hover:bg-slate-100">
+                              <label key={oIdx} className="flex items-center space-x-2.5 text-xs cursor-pointer p-2 rounded-lg hover:bg-slate-100 active:bg-slate-200 transition select-none">
                                 <input 
                                   type="radio" 
                                   name={`q${idx}`} 
                                   checked={userAnswers[idx] === oIdx}
                                   onChange={() => handleOptionSelect(idx, oIdx)}
-                                  className="text-indigo-600 focus:ring-indigo-600"
+                                  className="w-4 h-4 text-indigo-600 focus:ring-indigo-600 shrink-0"
                                 />
-                                <span>{opt}</span>
+                                <span className="leading-snug">{opt}</span>
                               </label>
                             ))}
                           </div>
@@ -440,15 +477,15 @@ export default function App() {
 
               {/* Step 3: Recommendations & Study Plan (Appears AFTER Quiz Submission) */}
               {scoreResult && studyPlan && (
-                <div className="bg-white p-6 rounded-2xl border border-emerald-200 shadow-lg space-y-4">
-                  <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+                <div className="bg-white p-4 sm:p-6 rounded-2xl border border-emerald-200 shadow-lg space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3 border-slate-100">
                     <div>
-                      <h3 className="text-base font-bold text-slate-900">3. Recommended Study Plan & Next Steps</h3>
+                      <h3 className="text-sm sm:text-base font-bold text-slate-900">3. Recommended Study Plan & Next Steps</h3>
                       <p className="text-xs text-slate-500">Tailored activities based on your assessment results.</p>
                     </div>
-                    <div className="px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-right">
+                    <div className="px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-left sm:text-right w-full sm:w-auto">
                       <p className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider">Score Achieved</p>
-                      <p className="text-lg font-extrabold text-emerald-800">{scoreResult.score} / {scoreResult.total} ({scoreResult.percentage})</p>
+                      <p className="text-base sm:text-lg font-extrabold text-emerald-800">{scoreResult.score} / {scoreResult.total} ({scoreResult.percentage})</p>
                     </div>
                   </div>
 
@@ -465,7 +502,7 @@ export default function App() {
                   </div>
 
                   <div className="pt-2 flex justify-end">
-                    <button onClick={handleSavePlan} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-xs font-bold transition shadow-md">
+                    <button onClick={handleSavePlan} className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-xs font-bold transition shadow-md">
                       Confirm & Save Study Plan
                     </button>
                   </div>
@@ -478,26 +515,26 @@ export default function App() {
           {/* DASHBOARD */}
           {activeTab === 'Dashboard' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 flex items-center space-x-4 shadow-xs">
-                  <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl text-2xl">📚</div>
-                  <div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
+                <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 flex items-center space-x-4 shadow-xs">
+                  <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl text-2xl shrink-0">📚</div>
+                  <div className="min-w-0">
                     <p className="text-xs text-slate-500 font-medium">Active Topic</p>
-                    <p className="text-lg font-bold text-slate-900">Python Basics</p>
+                    <p className="text-base sm:text-lg font-bold text-slate-900 truncate">Python Basics</p>
                   </div>
                 </div>
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 flex items-center space-x-4 shadow-xs">
-                  <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl text-2xl">🎯</div>
-                  <div>
+                <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 flex items-center space-x-4 shadow-xs">
+                  <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl text-2xl shrink-0">🎯</div>
+                  <div className="min-w-0">
                     <p className="text-xs text-slate-500 font-medium">Last Quiz Score</p>
-                    <p className="text-lg font-bold text-slate-900">{scoreResult ? scoreResult.percentage : '66%'}</p>
+                    <p className="text-base sm:text-lg font-bold text-slate-900">{scoreResult ? scoreResult.percentage : '66%'}</p>
                   </div>
                 </div>
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 flex items-center space-x-4 shadow-xs">
-                  <div className="p-3 bg-amber-100 text-amber-600 rounded-xl text-2xl">💾</div>
-                  <div>
+                <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 flex items-center space-x-4 shadow-xs sm:col-span-2 md:col-span-1">
+                  <div className="p-3 bg-amber-100 text-amber-600 rounded-xl text-2xl shrink-0">💾</div>
+                  <div className="min-w-0">
                     <p className="text-xs text-slate-500 font-medium">Saved Study Plans</p>
-                    <p className="text-lg font-bold text-slate-900">{savedPlansDB.length} Plans</p>
+                    <p className="text-base sm:text-lg font-bold text-slate-900">{savedPlansDB.length} Plans</p>
                   </div>
                 </div>
               </div>
@@ -506,14 +543,16 @@ export default function App() {
 
           {/* MATERIALS */}
           {activeTab === 'Materials' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
               {DEMO_TEACHING_MATERIAL.map((mat) => (
-                <div key={mat.id} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition">
+                <div key={mat.id} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition flex flex-col">
                   <img src={mat.image} alt={mat.title} className="w-full h-36 object-cover" />
-                  <div className="p-5">
-                    <span className="text-[10px] font-mono font-bold bg-indigo-50 text-indigo-600 px-2 py-1 rounded">{mat.id}</span>
-                    <h4 className="font-bold text-sm text-slate-900 mt-2 mb-1">{mat.title}</h4>
-                    <p className="text-xs text-slate-500">{mat.content}</p>
+                  <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between">
+                    <div>
+                      <span className="text-[10px] font-mono font-bold bg-indigo-50 text-indigo-600 px-2 py-1 rounded">{mat.id}</span>
+                      <h4 className="font-bold text-sm text-slate-900 mt-2 mb-1">{mat.title}</h4>
+                      <p className="text-xs text-slate-500 leading-relaxed">{mat.content}</p>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -522,15 +561,15 @@ export default function App() {
 
           {/* QUIZZES */}
           {activeTab === 'Quizzes' && (
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
               <h3 className="text-base font-bold text-slate-900">Available Quizzes</h3>
               <p className="text-xs text-slate-500 font-medium">Take quizzes directly generated from team demo materials.</p>
-              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <p className="font-bold text-xs text-slate-900">Python Data Structures Quiz (3 Questions)</p>
                   <p className="text-[11px] text-slate-500">Covers SEC_PY_01, SEC_PY_02, SEC_PY_03</p>
                 </div>
-                <button onClick={() => setActiveTab('AI Tutor')} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">
+                <button onClick={() => setActiveTab('AI Tutor')} className="w-full sm:w-auto bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0">
                   Start Quiz
                 </button>
               </div>
@@ -539,7 +578,7 @@ export default function App() {
 
           {/* PROGRESS */}
           {activeTab === 'Progress' && (
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
               <h3 className="text-base font-bold text-slate-900">Student Progress Metrics</h3>
               <p className="text-xs text-slate-500 font-medium">Student: Alex Kim (STU_101)</p>
               <div className="p-4 bg-emerald-50 text-emerald-800 rounded-xl border border-emerald-200 text-xs">
@@ -550,7 +589,7 @@ export default function App() {
 
           {/* STUDY PLANS */}
           {activeTab === 'Study Plans' && (
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
               <div className="flex justify-between items-center border-b pb-3 border-slate-100">
                 <div>
                   <h3 className="text-base font-bold text-slate-900">Saved Study Plans</h3>
@@ -566,7 +605,7 @@ export default function App() {
               ) : (
                 <div className="space-y-3">
                   {savedPlansDB.map((plan) => (
-                    <div key={plan.planId} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
+                    <div key={plan.planId} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="space-y-1">
                         <div className="flex items-center space-x-2">
                           <span className="font-bold text-xs text-indigo-600">{plan.planId}</span>
@@ -575,7 +614,7 @@ export default function App() {
                         <p className="text-xs font-semibold text-slate-900">Score Achieved: {plan.score} ({plan.rawScore})</p>
                         <p className="text-[11px] text-slate-500">References: {plan.sourceReferences.join(', ')}</p>
                       </div>
-                      <button onClick={() => alert(`Reopened Plan ${plan.planId}:\n\n${plan.activities.map(a => a.title).join('\n')}`)} className="bg-slate-200 hover:bg-slate-300 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-semibold">
+                      <button onClick={() => alert(`Reopened Plan ${plan.planId}:\n\n${plan.activities.map(a => a.title).join('\n')}`)} className="w-full sm:w-auto bg-slate-200 hover:bg-slate-300 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0">
                         Reopen Plan
                       </button>
                     </div>
@@ -590,13 +629,16 @@ export default function App() {
 
       {/* INSPECTOR MODAL */}
       {isInspectorOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 text-slate-200 w-full max-w-2xl rounded-2xl p-6 shadow-2xl border border-slate-800">
-            <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
-              <h3 className="font-mono text-sm font-bold text-indigo-400">⚙️ Tool Call Inspector</h3>
-              <button onClick={() => setIsInspectorOpen(false)} className="text-slate-400 hover:text-white font-bold text-lg">&times;</button>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 z-50">
+          <div className="bg-slate-900 text-slate-200 w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl p-4 sm:p-6 shadow-2xl border border-slate-800">
+            <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3 shrink-0">
+              <h3 className="font-mono text-sm font-bold text-indigo-400 flex items-center space-x-1.5">
+                <span>⚙️</span>
+                <span>Tool Call Inspector</span>
+              </h3>
+              <button onClick={() => setIsInspectorOpen(false)} className="text-slate-400 hover:text-white font-bold text-xl p-1 focus:outline-none">&times;</button>
             </div>
-            <div className="font-mono text-xs space-y-2 max-h-80 overflow-y-auto bg-slate-950 p-4 rounded-xl border border-slate-800">
+            <div className="font-mono text-[11px] sm:text-xs space-y-2 max-h-[60vh] overflow-y-auto bg-slate-950 p-3 sm:p-4 rounded-xl border border-slate-800 break-words whitespace-pre-wrap">
               {inspectorLogs.length === 0 ? (
                 <p className="text-slate-500">// System ready. Interact with AI Tutor to test tool calls...</p>
               ) : (
