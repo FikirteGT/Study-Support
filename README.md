@@ -1,16 +1,36 @@
-# Study Support AI Agent (Academic Support Tutor)
+# CS101 Python AI Study Support Agent
 
-## Hackathon Documentation & Specifications
-- 📘 **[Software Requirements Specification (SRS) & Design Note](./SRS.md)**
-- 🧪 **[Five-Case Test Report](./TEST_REPORT.md)**
-- 🐍 **[Course Syllabus Demo Data](./backend/src/data/demoMaterials.js)**
+**Live Frontend Application:** [https://study-support-vertex.vercel.app/]
+**Live Backend API:** [https://study-support-1.onrender.com]
 
----
+## System Architecture & Secrets Isolation
+Our deployment architecture strictly complies with the zero-cost and secrets-isolation requirements. All database credentials and API keys (`GEMINI_API_KEY`, `DATABASE_URL`) are isolated on the Render backend environment variables and are completely inaccessible from the client bundle.
 
-## Project Structure
-- `backend/`: Express.js API backend containing the 3 AI agent tools & PostgreSQL integration.
-  - `src/tools/searchMaterial.js`: **Tool 1** (Keyword search across Python syllabus)
-  - `src/tools/checkAssessment.js`: **Tool 2** (Pure code evaluation & scoring)
-  - `src/tools/saveStudyPlan.js`: **Tool 3** (User confirmation & remote PostgreSQL save)
-- `frontend/`: React (Vite) client interface for interactive student testing and plan reopening.
-- `database/`: Hosted PostgreSQL schema (`study_plans` table) and seed scripts.
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                       Client Browser                        │
+│     (Topic Input, Quiz UI, Confirmation Modal, Reopen)      │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ HTTPS / JSON
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Backend Express API                     │
+│   ├── /api/agent        (Clarification, Search, Quiz Gen)   │
+│   ├── /api/assess       (Application Code Scoring)          │
+│   └── /api/plans        (Confirmation Guard & DB Save)      │
+│   └── /api/plans/:id    (Reopen Saved Plans by ID)          │
+└──────┬───────────────────────┬───────────────────────┬──────┘
+       │                       │                       │
+       ▼                       ▼                       ▼
+┌──────────────┐       ┌──────────────┐       ┌──────────────┐
+│ Tool 1:      │       │ Google       │       │ Tool 3:      │
+│ search_      │       │ Gemini API   │       │ save_        │
+│ material     │       │ (AI Studio   │       │ study_plan   │
+│ (Local JSON) │       │  Free Tier)  │       │ (Remote DB)  │
+└──────────────┘       └──────────────┘       └──────┬───────┘
+                                                     │
+                                                     ▼
+                                      ┌────────────────────────┐
+                                      │   Remote PostgreSQL    │
+                                      │   (Neon / Supabase)    │
+                                      └────────────────────────┘
