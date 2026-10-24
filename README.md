@@ -14,4 +14,3 @@
   - `src/tools/saveStudyPlan.js`: **Tool 3** (User confirmation & remote PostgreSQL save)
 - `frontend/`: React (Vite) client interface for interactive student testing and plan reopening.
 - `database/`: Hosted PostgreSQL schema (`study_plans` table) and seed scripts.
-- `study-support/`: Fullstack Next.js fallback implementation.

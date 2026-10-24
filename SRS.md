@@ -144,7 +144,7 @@ This Software Requirements Specification (SRS) defines the functional, architect
                                │ HTTPS / JSON
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                  Backend Express / Next.js                  │
+│                     Backend Express API                     │
 │   ├── /api/agent        (Clarification, Search, Quiz Gen)   │
 │   ├── /api/assess       (Application Code Scoring)          │
 │   └── /api/plans        (Confirmation Guard & DB Save)      │
