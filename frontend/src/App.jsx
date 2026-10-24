@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   searchMaterial,
   promptAgent,
@@ -6,6 +6,7 @@ import {
   saveStudyPlan,
   getStudyPlans,
   getStudyPlanById,
+  updatePlanActivities,
   getMaterials,
   checkBackendHealth,
   API_BASE
@@ -171,6 +172,31 @@ export default function App() {
   const [materialsSearch, setMaterialsSearch] = useState('');
   const [expandedMaterial, setExpandedMaterial] = useState('SEC-PY-101'); // default expanded section
 
+  // Previous-Attempt Analysis & Progress Tracking State
+  const [quizAttempts, setQuizAttempts] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cs101_quiz_attempts');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [aiTutorAttemptAnalysis, setAiTutorAttemptAnalysis] = useState(null);
+  const [practiceAttemptAnalysis, setPracticeAttemptAnalysis] = useState(null);
+
+  // Activity Completion Tracking State
+  const [completedActivities, setCompletedActivities] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cs101_completed_activities');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [studyPlansFilter, setStudyPlansFilter] = useState('all'); // 'all' | 'in_progress' | 'completed'
+
   // Persistence state
   const [savedPlans, setSavedPlans] = useState([]);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
@@ -188,6 +214,120 @@ export default function App() {
     const interval = setInterval(checkHealth, 8000);
     return () => clearInterval(interval);
   }, []);
+
+  // Sync synthetic attempts from savedPlans if quizAttempts is empty
+  useEffect(() => {
+    if (savedPlans.length > 0 && quizAttempts.length === 0) {
+      const synthetic = savedPlans.map((p, i) => ({
+        id: p.id || `plan_att_${i}`,
+        timestamp: p.created_at,
+        topic: p.topic,
+        sectionId: Array.isArray(p.section_references) ? p.section_references[0] : 'SEC-PY-101',
+        score: p.score,
+        total: p.total_questions || 3,
+        passed: p.score >= 2,
+        mistakes: []
+      }));
+      setQuizAttempts(synthetic);
+    }
+  }, [savedPlans]);
+
+  const recordAttempt = (newAttempt) => {
+    setQuizAttempts(prev => {
+      const updated = [newAttempt, ...prev];
+      try {
+        localStorage.setItem('cs101_quiz_attempts', JSON.stringify(updated.slice(0, 50)));
+      } catch (e) {
+        console.warn('Could not save attempt to localStorage:', e);
+      }
+      return updated;
+    });
+  };
+
+  const toggleActivityCompletion = async (planId, activityIdx, activityObj, planActivities = null) => {
+    const key = `${planId || 'active'}_${activityIdx}`;
+    const nextState = !completedActivities[key];
+
+    setCompletedActivities(prev => {
+      const updated = { ...prev, [key]: nextState };
+      try {
+        localStorage.setItem('cs101_completed_activities', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Could not save activity completion:', e);
+      }
+      return updated;
+    });
+
+    if (planId && planId !== 'active' && planActivities && Array.isArray(planActivities)) {
+      const updatedList = planActivities.map((act, idx) => {
+        if (idx === activityIdx) return { ...act, completed: nextState };
+        return { ...act, completed: !!completedActivities[`${planId}_${idx}`] };
+      });
+      try {
+        await updatePlanActivities(planId, updatedList);
+        setSavedPlans(prev => prev.map(p => p.id === planId ? { ...p, activities: updatedList } : p));
+      } catch (err) {
+        console.warn('Could not sync activity completion to backend:', err);
+      }
+    }
+  };
+
+  // Progress Charts & Analytics Calculations
+  const analytics = useMemo(() => {
+    const totalAttempts = quizAttempts.length;
+    const passedAttempts = quizAttempts.filter(a => a.passed || a.score >= 2).length;
+    const passRate = totalAttempts > 0 ? Math.round((passedAttempts / totalAttempts) * 100) : 0;
+    const totalScoreSum = quizAttempts.reduce((acc, a) => acc + (a.score || 0), 0);
+    const avgScore = totalAttempts > 0 ? (totalScoreSum / totalAttempts).toFixed(1) : '0.0';
+
+    // Section Mastery Breakdown
+    const sections = ['SEC-PY-101', 'SEC-PY-102', 'SEC-PY-103'];
+    const sectionStats = sections.map(secId => {
+      const atts = quizAttempts.filter(a => a.sectionId === secId || (secId === 'SEC-PY-101' && a.topic && a.topic.includes('list')) || (secId === 'SEC-PY-102' && a.topic && a.topic.includes('scope')) || (secId === 'SEC-PY-103' && a.topic && a.topic.includes('OOP')));
+      const scores = atts.map(a => a.score);
+      const bestScore = scores.length > 0 ? Math.max(...scores) : 0;
+      const latestScore = atts.length > 0 ? atts[0].score : null;
+      const masteryPct = Math.round((bestScore / 3) * 100);
+      const sectionInfo = COURSE_SECTIONS.find(s => s.id === secId) || { title: secId, number: 1 };
+
+      return {
+        id: secId,
+        number: sectionInfo.number,
+        title: sectionInfo.title,
+        attemptsCount: atts.length,
+        bestScore,
+        latestScore,
+        masteryPct,
+        status: masteryPct === 100 ? 'Mastered ⭐' : (masteryPct >= 66 ? 'Proficient 📈' : (atts.length > 0 ? 'Needs Practice 🔄' : 'Not Started ⏳'))
+      };
+    });
+
+    const masteredCount = sectionStats.filter(s => s.masteryPct === 100).length;
+
+    // Activity Completion Stats across all saved plans
+    let totalActivities = 0;
+    let completedActivitiesCount = 0;
+    savedPlans.forEach(plan => {
+      (plan.activities || []).forEach((act, idx) => {
+        totalActivities++;
+        if (completedActivities[`${plan.id}_${idx}`] || act.completed) {
+          completedActivitiesCount++;
+        }
+      });
+    });
+    const activityCompletionPct = totalActivities > 0 ? Math.round((completedActivitiesCount / totalActivities) * 100) : 0;
+
+    return {
+      totalAttempts,
+      passRate,
+      avgScore,
+      masteredCount,
+      sectionStats,
+      totalActivities,
+      completedActivitiesCount,
+      activityCompletionPct
+    };
+  }, [quizAttempts, savedPlans, completedActivities]);
 
   const checkHealth = async () => {
     try {
@@ -316,6 +456,41 @@ export default function App() {
 
       setScoreResult(data);
       setStudyPlan(data.proposedActivities || []);
+
+      // Calculate previous attempt analysis
+      const existingAttempts = quizAttempts.filter(a => 
+        (a.topic && a.topic.toLowerCase().trim() === topic.toLowerCase().trim()) ||
+        (a.sectionId && quizData.some(q => q.sectionRef === a.sectionId))
+      );
+      const prev = existingAttempts.length > 0 ? existingAttempts[0] : null;
+      const attemptNum = existingAttempts.length + 1;
+      const scoreDelta = prev !== null ? (data.score - prev.score) : null;
+
+      const analysis = {
+        attemptNumber: attemptNum,
+        previousScore: prev ? prev.score : null,
+        previousTotal: prev ? prev.total : 3,
+        previousDate: prev ? prev.timestamp : null,
+        currentScore: data.score,
+        currentTotal: data.total,
+        scoreDelta: scoreDelta,
+        trend: scoreDelta > 0 ? 'improved' : (scoreDelta === 0 ? 'maintained' : (scoreDelta < 0 ? 'declined' : 'initial')),
+        masteryLevel: data.score === 3 ? 'Mastered ⭐' : (data.score >= 2 ? 'Proficient 📈' : 'Needs Practice 🔄')
+      };
+      setAiTutorAttemptAnalysis(analysis);
+
+      // Record this attempt to persistent history
+      recordAttempt({
+        id: payload.quizId,
+        timestamp: new Date().toISOString(),
+        topic: topic,
+        sectionId: quizData[0]?.sectionRef || 'SEC-PY-101',
+        score: data.score,
+        total: data.total,
+        passed: data.score >= 2,
+        attemptNumber: attemptNum,
+        scoreDelta: scoreDelta
+      });
     } catch (err) {
       alert("Error evaluating assessment: " + err.message);
     } finally {
@@ -335,7 +510,10 @@ export default function App() {
       topic: topic,
       score: scoreResult.score,
       totalQuestions: scoreResult.total,
-      activities: studyPlan,
+      activities: studyPlan.map((act, i) => ({
+        ...act,
+        completed: !!completedActivities[`active_${i}`]
+      })),
       references: Array.from(new Set(quizData.map(q => q.sectionRef)))
     };
 
@@ -415,6 +593,41 @@ export default function App() {
     try {
       const data = await evaluateAssessment(payload);
       setPracticeResult(data);
+
+      // Calculate previous attempt analysis
+      const existingAttempts = quizAttempts.filter(a => 
+        a.sectionId === activePracticeQuiz.sectionId ||
+        (a.topic && a.topic.toLowerCase().trim() === activePracticeQuiz.title.toLowerCase().trim())
+      );
+      const prev = existingAttempts.length > 0 ? existingAttempts[0] : null;
+      const attemptNum = existingAttempts.length + 1;
+      const scoreDelta = prev !== null ? (data.score - prev.score) : null;
+
+      const analysis = {
+        attemptNumber: attemptNum,
+        previousScore: prev ? prev.score : null,
+        previousTotal: prev ? prev.total : 3,
+        previousDate: prev ? prev.timestamp : null,
+        currentScore: data.score,
+        currentTotal: data.total,
+        scoreDelta: scoreDelta,
+        trend: scoreDelta > 0 ? 'improved' : (scoreDelta === 0 ? 'maintained' : (scoreDelta < 0 ? 'declined' : 'initial')),
+        masteryLevel: data.score === 3 ? 'Mastered ⭐' : (data.score >= 2 ? 'Proficient 📈' : 'Needs Practice 🔄')
+      };
+      setPracticeAttemptAnalysis(analysis);
+
+      // Record this attempt to persistent history
+      recordAttempt({
+        id: payload.quizId,
+        timestamp: new Date().toISOString(),
+        topic: activePracticeQuiz.title,
+        sectionId: activePracticeQuiz.sectionId,
+        score: data.score,
+        total: data.total,
+        passed: data.score >= 2,
+        attemptNumber: attemptNum,
+        scoreDelta: scoreDelta
+      });
     } catch (err) {
       alert("Error evaluating quiz: " + err.message);
     } finally {
@@ -433,7 +646,10 @@ export default function App() {
       topic: activePracticeQuiz.title,
       score: practiceResult.score,
       totalQuestions: practiceResult.total || 3,
-      activities: practiceResult.proposedActivities || [],
+      activities: (practiceResult.proposedActivities || []).map((act, i) => ({
+        ...act,
+        completed: !!completedActivities[`practice_${i}`]
+      })),
       references: [activePracticeQuiz.sectionId]
     };
 
@@ -810,7 +1026,7 @@ export default function App() {
 
               {/* Step 3: Recommendations & Study Plan */}
               {scoreResult && studyPlan && (
-                <div className="bg-white p-4 sm:p-6 rounded-2xl border border-emerald-200 shadow-lg space-y-4">
+                <div className="bg-white p-4 sm:p-6 rounded-2xl border border-emerald-200 shadow-lg space-y-5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3 border-slate-100">
                     <div>
                       <h3 className="text-sm sm:text-base font-bold text-slate-900">3. Formulated Study Activities</h3>
@@ -828,18 +1044,109 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {studyPlan.map((act, i) => (
-                      <div key={i} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-mono font-bold">
-                            Ref: {act.sectionRef}
+                  {/* Previous-Attempt Analysis Card */}
+                  {aiTutorAttemptAnalysis && (
+                    <div className="bg-gradient-to-r from-indigo-50 to-slate-50 border border-indigo-200 rounded-xl p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-lg">📊</span>
+                          <div>
+                            <h4 className="font-bold text-xs text-indigo-950 uppercase tracking-wider">
+                              Previous-Attempt Analysis • Attempt #{aiTutorAttemptAnalysis.attemptNumber}
+                            </h4>
+                            <p className="text-[11px] text-slate-500">Comparative performance analysis across attempts for this topic.</p>
+                          </div>
+                        </div>
+                        <span className="self-start sm:self-auto text-xs font-bold px-3 py-1 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
+                          {aiTutorAttemptAnalysis.masteryLevel}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                        <div className="bg-white p-3 rounded-xl border border-indigo-100 shadow-2xs">
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Previous Score</span>
+                          <span className="text-sm font-extrabold text-slate-700">
+                            {aiTutorAttemptAnalysis.previousScore !== null 
+                              ? `${aiTutorAttemptAnalysis.previousScore} / ${aiTutorAttemptAnalysis.previousTotal}` 
+                              : 'No prior attempt'}
                           </span>
                         </div>
-                        <p className="font-bold text-xs text-slate-900">{act.title}</p>
-                        <p className="text-[11px] text-slate-600 leading-relaxed">{act.description}</p>
+                        <div className="bg-white p-3 rounded-xl border border-indigo-100 shadow-2xs">
+                          <span className="text-[10px] text-indigo-600 font-bold block uppercase tracking-wider">Current Score</span>
+                          <span className="text-sm font-extrabold text-indigo-900">
+                            {aiTutorAttemptAnalysis.currentScore} / {aiTutorAttemptAnalysis.currentTotal}
+                          </span>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-indigo-100 shadow-2xs">
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Performance Trajectory</span>
+                          <span className={`text-xs font-bold ${
+                            aiTutorAttemptAnalysis.scoreDelta > 0 
+                              ? 'text-emerald-700' 
+                              : aiTutorAttemptAnalysis.scoreDelta === 0 
+                              ? 'text-indigo-700' 
+                              : aiTutorAttemptAnalysis.scoreDelta < 0 
+                              ? 'text-amber-700' 
+                              : 'text-slate-600'
+                          }`}>
+                            {aiTutorAttemptAnalysis.scoreDelta > 0 && `+${aiTutorAttemptAnalysis.scoreDelta} Score Gain (+${Math.round((aiTutorAttemptAnalysis.scoreDelta/3)*100)}%) 📈`}
+                            {aiTutorAttemptAnalysis.scoreDelta === 0 && 'Maintained Consistency 🎯'}
+                            {aiTutorAttemptAnalysis.scoreDelta < 0 && `${aiTutorAttemptAnalysis.scoreDelta} Score Change 🔄`}
+                            {aiTutorAttemptAnalysis.scoreDelta === null && 'First baseline recorded 🚀'}
+                          </span>
+                        </div>
                       </div>
-                    ))}
+                    </div>
+                  )}
+
+                  {/* Formulated Activities with Interactive Completion Tracking */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider">Recommended Study Activities</h4>
+                      <span className="text-[11px] text-slate-500 font-medium">Click checkbox to mark activities complete</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {studyPlan.map((act, i) => {
+                        const isDone = !!completedActivities[`active_${i}`];
+                        return (
+                          <div 
+                            key={i} 
+                            className={`p-4 rounded-xl border transition-all flex flex-col justify-between space-y-3 ${
+                              isDone ? 'bg-emerald-50/60 border-emerald-300' : 'bg-slate-50 border-slate-200'
+                            }`}
+                          >
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-mono font-bold">
+                                  Ref: {act.sectionRef}
+                                </span>
+                                {isDone && (
+                                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
+                                    Done ✓
+                                  </span>
+                                )}
+                              </div>
+                              <p className={`font-bold text-xs ${isDone ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
+                                {act.title}
+                              </p>
+                              <p className="text-[11px] text-slate-600 leading-relaxed">{act.description}</p>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => toggleActivityCompletion('active', i, act)}
+                              className={`w-full py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition ${
+                                isDone 
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white' 
+                                  : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                              }`}
+                            >
+                              <span>{isDone ? '✓ Completed' : '○ Mark as Completed'}</span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {/* Confirmation Gate before DB write */}
@@ -864,36 +1171,356 @@ export default function App() {
           {/* DASHBOARD */}
           {activeTab === 'Dashboard' && (
             <div className="space-y-6 max-w-5xl mx-auto">
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
-                <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 flex items-center space-x-4 shadow-xs">
-                  <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl text-2xl shrink-0">📚</div>
-                  <div className="min-w-0">
-                    <p className="text-xs text-slate-500 font-medium">Enrolled Course</p>
-                    <p className="text-sm font-bold text-slate-900 truncate">CS101 Python</p>
+              
+              {/* Row 1: Academic Metric Overview Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Avg Score</span>
+                    <span className="text-base">📊</span>
+                  </div>
+                  <div>
+                    <p className="text-xl sm:text-2xl font-black text-slate-900">{analytics.avgScore} <span className="text-xs text-slate-400 font-normal">/ 3.0</span></p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{analytics.totalAttempts} total quizzes taken</p>
                   </div>
                 </div>
-                <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 flex items-center space-x-4 shadow-xs">
-                  <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl text-2xl shrink-0">🎯</div>
-                  <div className="min-w-0">
-                    <p className="text-xs text-slate-500 font-medium">Latest Quiz Score</p>
-                    <p className="text-base sm:text-lg font-bold text-slate-900">
-                      {practiceResult ? `${practiceResult.score}/${practiceResult.total}` : (scoreResult ? `${scoreResult.score}/${scoreResult.total}` : (savedPlans[0] ? `${savedPlans[0].score}/${savedPlans[0].total_questions || 3}` : 'Ready to start'))}
-                    </p>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Pass Rate</span>
+                    <span className="text-base">🎯</span>
+                  </div>
+                  <div>
+                    <p className="text-xl sm:text-2xl font-black text-emerald-700">{analytics.passRate}%</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Threshold: Score ≥ 2/3</p>
                   </div>
                 </div>
-                <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 flex items-center space-x-4 shadow-xs sm:col-span-2 md:col-span-1">
-                  <div className="p-3 bg-amber-100 text-amber-600 rounded-xl text-2xl shrink-0">💾</div>
-                  <div className="min-w-0">
-                    <p className="text-xs text-slate-500 font-medium">Saved Study Plans</p>
-                    <p className="text-base sm:text-lg font-bold text-slate-900">{savedPlans.length} Plans</p>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Modules Mastered</span>
+                    <span className="text-base">⭐</span>
+                  </div>
+                  <div>
+                    <p className="text-xl sm:text-2xl font-black text-indigo-700">{analytics.masteredCount} <span className="text-xs text-slate-400 font-normal">/ 3</span></p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{Math.round((analytics.masteredCount / 3) * 100)}% syllabus 100%</p>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Activities Done</span>
+                    <span className="text-base">✅</span>
+                  </div>
+                  <div>
+                    <p className="text-xl sm:text-2xl font-black text-teal-700">{analytics.completedActivitiesCount} <span className="text-xs text-slate-400 font-normal">/ {analytics.totalActivities}</span></p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{analytics.activityCompletionPct}% study plan progress</p>
                   </div>
                 </div>
               </div>
 
-              {/* Dedicated Task Navigation */}
+              {/* Row 2: SVG Score Trajectory & Progress Chart */}
+              <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-base">📈</span>
+                      <h3 className="font-bold text-sm sm:text-base text-slate-900">Quiz Performance & Score Progression Chart</h3>
+                    </div>
+                    <p className="text-xs text-slate-500">Chronological trajectory of quiz scores across recent attempts against the pass threshold.</p>
+                  </div>
+                  <div className="flex items-center space-x-3 text-[11px]">
+                    <span className="flex items-center space-x-1">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                      <span className="text-slate-600 font-medium">Passed (2-3)</span>
+                    </span>
+                    <span className="flex items-center space-x-1">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                      <span className="text-slate-600 font-medium">Remedial (0-1)</span>
+                    </span>
+                    <span className="flex items-center space-x-1">
+                      <span className="w-3 border-b-2 border-dashed border-amber-500"></span>
+                      <span className="text-slate-600 font-medium">Pass Threshold</span>
+                    </span>
+                  </div>
+                </div>
+
+                {quizAttempts.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl text-xs space-y-2">
+                    <p>No quiz attempts recorded yet.</p>
+                    <button
+                      onClick={() => setActiveTab('Quizzes')}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-xs transition"
+                    >
+                      Take Your First Practice Quiz ➔
+                    </button>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    {(() => {
+                      const chartAttempts = [...quizAttempts].slice(0, 8).reverse();
+                      const svgWidth = 560;
+                      const svgHeight = 160;
+                      const padLeft = 45;
+                      const padRight = 35;
+                      const padTop = 25;
+                      const padBottom = 30;
+                      const plotWidth = svgWidth - padLeft - padRight;
+                      const plotHeight = svgHeight - padTop - padBottom;
+
+                      const getCoords = (idx, score) => {
+                        const x = chartAttempts.length > 1 
+                          ? padLeft + (idx * (plotWidth / (chartAttempts.length - 1))) 
+                          : padLeft + (plotWidth / 2);
+                        const y = padTop + ((3 - Math.min(3, Math.max(0, score))) * (plotHeight / 3));
+                        return { x, y };
+                      };
+
+                      const pointsList = chartAttempts.map((att, i) => getCoords(i, att.score || 0));
+                      const polylinePoints = pointsList.map(p => `${p.x},${p.y}`).join(' ');
+                      const polygonPoints = pointsList.length > 0 
+                        ? `${pointsList[0].x},${padTop + plotHeight} ${polylinePoints} ${pointsList[pointsList.length - 1].x},${padTop + plotHeight}` 
+                        : '';
+
+                      return (
+                        <div className="min-w-[480px]">
+                          <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-auto select-none">
+                            <defs>
+                              <linearGradient id="scoreTrendGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#6366f1" stopOpacity="0.25" />
+                                <stop offset="100%" stopColor="#6366f1" stopOpacity="0.0" />
+                              </linearGradient>
+                            </defs>
+
+                            {/* Horizontal Score Gridlines */}
+                            {[3, 2, 1, 0].map(scoreVal => {
+                              const y = padTop + ((3 - scoreVal) * (plotHeight / 3));
+                              const isThreshold = scoreVal === 2;
+                              return (
+                                <g key={scoreVal}>
+                                  <line 
+                                    x1={padLeft} 
+                                    y1={y} 
+                                    x2={svgWidth - padRight} 
+                                    y2={y} 
+                                    stroke={isThreshold ? "#f59e0b" : "#e2e8f0"} 
+                                    strokeWidth={isThreshold ? "1.5" : "1"} 
+                                    strokeDasharray={isThreshold ? "4 3" : "none"}
+                                  />
+                                  <text 
+                                    x={padLeft - 8} 
+                                    y={y + 3} 
+                                    textAnchor="end" 
+                                    fontSize="10" 
+                                    fontWeight={isThreshold ? "bold" : "normal"}
+                                    fill={isThreshold ? "#b45309" : "#94a3b8"}
+                                  >
+                                    {scoreVal}/3
+                                  </text>
+                                </g>
+                              );
+                            })}
+
+                            {/* Gradient Area Fill */}
+                            {chartAttempts.length > 1 && (
+                              <polygon points={polygonPoints} fill="url(#scoreTrendGradient)" />
+                            )}
+
+                            {/* Connecting Score Line */}
+                            {chartAttempts.length > 1 && (
+                              <polyline 
+                                points={polylinePoints} 
+                                fill="none" 
+                                stroke="#6366f1" 
+                                strokeWidth="2.5" 
+                                strokeLinecap="round" 
+                                strokeLinejoin="round" 
+                              />
+                            )}
+
+                            {/* Score Points & Markers */}
+                            {pointsList.map((pt, idx) => {
+                              const att = chartAttempts[idx];
+                              const isPassed = (att.score || 0) >= 2;
+                              return (
+                                <g key={idx}>
+                                  <circle 
+                                    cx={pt.x} 
+                                    cy={pt.y} 
+                                    r="6" 
+                                    fill={isPassed ? "#10b981" : "#f59e0b"} 
+                                    stroke="#ffffff" 
+                                    strokeWidth="2" 
+                                  />
+                                  <text 
+                                    x={pt.x} 
+                                    y={pt.y - 9} 
+                                    textAnchor="middle" 
+                                    fontSize="10" 
+                                    fontWeight="bold" 
+                                    fill="#1e293b"
+                                  >
+                                    {att.score}/3
+                                  </text>
+                                  <text 
+                                    x={pt.x} 
+                                    y={padTop + plotHeight + 16} 
+                                    textAnchor="middle" 
+                                    fontSize="9" 
+                                    fontWeight="500" 
+                                    fill="#64748b"
+                                  >
+                                    #{idx + 1}
+                                  </text>
+                                </g>
+                              );
+                            })}
+                          </svg>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              {/* Row 3: Section Mastery Progress Bars */}
+              <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="font-bold text-sm sm:text-base text-slate-900">Curriculum Module Mastery Tracking</h3>
+                    <p className="text-xs text-slate-500">Track competency, highest score, and practice completion per syllabus module.</p>
+                  </div>
+                  <button 
+                    onClick={() => setActiveTab('Materials')}
+                    className="text-xs text-indigo-600 font-semibold hover:underline self-start sm:self-auto"
+                  >
+                    View Full Syllabus ➔
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {analytics.sectionStats.map((sec) => (
+                    <div key={sec.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col justify-between space-y-3">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-bold">{sec.id}</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-700">
+                            {sec.status}
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-xs text-slate-900 leading-snug">{sec.title}</h4>
+                        <p className="text-[11px] text-slate-500">
+                          {sec.attemptsCount > 0 
+                            ? `Best: ${sec.bestScore}/3 • ${sec.attemptsCount} attempt${sec.attemptsCount > 1 ? 's' : ''}` 
+                            : 'No quiz attempts recorded'}
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] font-bold">
+                          <span className="text-slate-600">Mastery Level</span>
+                          <span className={sec.masteryPct === 100 ? 'text-emerald-700' : 'text-indigo-700'}>{sec.masteryPct}%</span>
+                        </div>
+                        <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                          <div 
+                            className={`h-2 rounded-full transition-all duration-500 ${
+                              sec.masteryPct === 100 ? 'bg-emerald-500' : (sec.masteryPct >= 66 ? 'bg-indigo-600' : 'bg-amber-500')
+                            }`} 
+                            style={{ width: `${sec.masteryPct}%` }}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('Quizzes');
+                            handleStartPracticeQuiz(sec.id, sec.title);
+                          }}
+                          className="w-full mt-2 bg-white hover:bg-slate-100 border border-slate-200 text-indigo-700 font-semibold py-1.5 rounded-lg text-xs transition"
+                        >
+                          Practice Module Quiz ➔
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Row 4: Previous-Attempt History Table */}
+              <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="font-bold text-sm sm:text-base text-slate-900">Previous-Attempt History & Comparative Logs</h3>
+                    <p className="text-xs text-slate-500">Audit trail of past evaluations and performance improvements.</p>
+                  </div>
+                  <span className="text-xs font-mono font-bold bg-slate-100 px-2.5 py-1 rounded-md text-slate-700">
+                    {quizAttempts.length} Records
+                  </span>
+                </div>
+
+                {quizAttempts.length === 0 ? (
+                  <p className="text-xs text-slate-400 py-3 text-center">No attempt history recorded yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider text-[10px]">
+                          <th className="py-2.5 px-3">Date / Time</th>
+                          <th className="py-2.5 px-3">Topic / Module</th>
+                          <th className="py-2.5 px-3">Score</th>
+                          <th className="py-2.5 px-3">Trajectory</th>
+                          <th className="py-2.5 px-3">Result</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {quizAttempts.slice(0, 6).map((att, i) => (
+                          <tr key={att.id || i} className="hover:bg-slate-50/80 transition">
+                            <td className="py-2.5 px-3 text-slate-500 font-mono text-[11px]">
+                              {att.timestamp ? new Date(att.timestamp).toLocaleDateString() : 'Recent'}
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-900 max-w-[200px] truncate">
+                              {att.topic || att.sectionId}
+                            </td>
+                            <td className="py-2.5 px-3 font-bold text-slate-800">
+                              <span className={`px-2 py-0.5 rounded font-mono ${
+                                (att.score || 0) >= 2 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {att.score} / {att.total || 3}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px]">
+                              {att.scoreDelta > 0 ? (
+                                <span className="text-emerald-700 font-bold">+{att.scoreDelta} Gain 📈</span>
+                              ) : att.scoreDelta === 0 ? (
+                                <span className="text-slate-500">Maintained 🎯</span>
+                              ) : att.scoreDelta < 0 ? (
+                                <span className="text-amber-700">{att.scoreDelta} 🔄</span>
+                              ) : (
+                                <span className="text-slate-400">Baseline 🚀</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {(att.score || 0) >= 2 ? (
+                                <span className="inline-block text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                  Passed ✓
+                                </span>
+                              ) : (
+                                <span className="inline-block text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-md">
+                                  Remedial
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Row 5: Dedicated Task Navigation Portals */}
               <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 space-y-4 shadow-xs">
                 <div>
-                  <h3 className="font-bold text-sm text-slate-900">Learning Portals & Tools</h3>
+                  <h3 className="font-bold text-sm text-slate-900">Learning Portals & Quick Actions</h3>
                   <p className="text-xs text-slate-500">Select any section to launch its dedicated workflow.</p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
@@ -940,14 +1567,14 @@ export default function App() {
                     <div>
                       <span className="text-xl">🎯</span>
                       <p className="font-bold text-xs text-amber-950 mt-1">Saved Plans</p>
-                      <p className="text-[11px] text-slate-600 leading-snug">Reopen confirmed mastery and remedial plans.</p>
+                      <p className="text-[11px] text-slate-600 leading-snug">Track activities and mark completion in your plans.</p>
                     </div>
                     <span className="text-[11px] text-amber-800 font-bold">Review Plans ➔</span>
                   </button>
                 </div>
               </div>
 
-              {/* Recent Saved Plans Preview */}
+              {/* Row 6: Recent Saved Plans Preview */}
               {savedPlans.length > 0 && (
                 <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 space-y-3 shadow-xs">
                   <div className="flex justify-between items-center">
@@ -1195,19 +1822,108 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Formulated Activities */}
-                  <div className="space-y-2">
-                    <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider">Tailored Study Activities</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {(practiceResult.proposedActivities || []).map((act, i) => (
-                        <div key={i} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                          <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-mono font-bold">
-                            Ref: {act.sectionRef}
-                          </span>
-                          <p className="font-bold text-xs text-slate-900">{act.title}</p>
-                          <p className="text-[11px] text-slate-600 leading-relaxed">{act.description}</p>
+                  {/* Previous-Attempt Analysis Card */}
+                  {practiceAttemptAnalysis && (
+                    <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-slate-50 border border-emerald-200 rounded-xl p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-lg">📊</span>
+                          <div>
+                            <h4 className="font-bold text-xs text-emerald-950 uppercase tracking-wider">
+                              Previous-Attempt Analysis • Attempt #{practiceAttemptAnalysis.attemptNumber}
+                            </h4>
+                            <p className="text-[11px] text-slate-500">Comparative assessment history for this course module.</p>
+                          </div>
                         </div>
-                      ))}
+                        <span className="self-start sm:self-auto text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          {practiceAttemptAnalysis.masteryLevel}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                        <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-2xs">
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Previous Score</span>
+                          <span className="text-sm font-extrabold text-slate-700">
+                            {practiceAttemptAnalysis.previousScore !== null 
+                              ? `${practiceAttemptAnalysis.previousScore} / ${practiceAttemptAnalysis.previousTotal}` 
+                              : 'No prior attempt'}
+                          </span>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-2xs">
+                          <span className="text-[10px] text-emerald-600 font-bold block uppercase tracking-wider">Current Score</span>
+                          <span className="text-sm font-extrabold text-emerald-900">
+                            {practiceAttemptAnalysis.currentScore} / {practiceAttemptAnalysis.currentTotal}
+                          </span>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-2xs">
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Performance Trajectory</span>
+                          <span className={`text-xs font-bold ${
+                            practiceAttemptAnalysis.scoreDelta > 0 
+                              ? 'text-emerald-700' 
+                              : practiceAttemptAnalysis.scoreDelta === 0 
+                              ? 'text-indigo-700' 
+                              : practiceAttemptAnalysis.scoreDelta < 0 
+                              ? 'text-amber-700' 
+                              : 'text-slate-600'
+                          }`}>
+                            {practiceAttemptAnalysis.scoreDelta > 0 && `+${practiceAttemptAnalysis.scoreDelta} Score Gain (+${Math.round((practiceAttemptAnalysis.scoreDelta/3)*100)}%) 📈`}
+                            {practiceAttemptAnalysis.scoreDelta === 0 && 'Maintained Consistency 🎯'}
+                            {practiceAttemptAnalysis.scoreDelta < 0 && `${practiceAttemptAnalysis.scoreDelta} Score Change 🔄`}
+                            {practiceAttemptAnalysis.scoreDelta === null && 'First baseline recorded 🚀'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Formulated Activities with Interactive Completion Tracking */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider">Tailored Study Activities</h4>
+                      <span className="text-[11px] text-slate-500 font-medium">Click checkbox to mark activities complete</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {(practiceResult.proposedActivities || []).map((act, i) => {
+                        const isDone = !!completedActivities[`practice_${i}`];
+                        return (
+                          <div 
+                            key={i} 
+                            className={`p-4 rounded-xl border transition-all flex flex-col justify-between space-y-3 ${
+                              isDone ? 'bg-emerald-50/60 border-emerald-300' : 'bg-slate-50 border-slate-200'
+                            }`}
+                          >
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-mono font-bold">
+                                  Ref: {act.sectionRef}
+                                </span>
+                                {isDone && (
+                                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
+                                    Done ✓
+                                  </span>
+                                )}
+                              </div>
+                              <p className={`font-bold text-xs ${isDone ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
+                                {act.title}
+                              </p>
+                              <p className="text-[11px] text-slate-600 leading-relaxed">{act.description}</p>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => toggleActivityCompletion('practice', i, act)}
+                              className={`w-full py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition ${
+                                isDone 
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white' 
+                                  : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                              }`}
+                            >
+                              <span>{isDone ? '✓ Completed' : '○ Mark as Completed'}</span>
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1255,48 +1971,209 @@ export default function App() {
 
           {/* STUDY PLANS */}
           {activeTab === 'Study Plans' && (
-            <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-              <div className="flex justify-between items-center border-b pb-3 border-slate-100">
+            <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4 border-slate-100">
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">Saved Study Plans</h3>
-                  <p className="text-xs text-slate-500">Reopen and review your personalized study plans.</p>
+                  <h3 className="text-base font-bold text-slate-900">Saved Study Plans & Activity Tracking</h3>
+                  <p className="text-xs text-slate-500">Track and complete personalized study activities saved to your academic profile.</p>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <button onClick={fetchSavedPlans} className="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1 rounded-md font-semibold text-slate-700">
+                  <button onClick={fetchSavedPlans} className="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg font-semibold text-slate-700 transition">
                     ↻ Refresh
                   </button>
-                  <span className="text-xs font-mono bg-slate-100 px-2.5 py-1 rounded-md font-bold">{savedPlans.length} Total</span>
+                  <span className="text-xs font-mono bg-indigo-50 text-indigo-700 px-2.5 py-1.5 rounded-lg font-bold">
+                    {savedPlans.length} Plans
+                  </span>
                 </div>
               </div>
+
+              {/* Filter Pills */}
+              {savedPlans.length > 0 && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {(() => {
+                    const plansWithProgress = savedPlans.map(plan => {
+                      const total = (plan.activities || []).length;
+                      const done = (plan.activities || []).filter((a, idx) => completedActivities[`${plan.id}_${idx}`] || a.completed).length;
+                      const isComplete = total > 0 && done === total;
+                      return { ...plan, isComplete, done, total };
+                    });
+                    const inProgressCount = plansWithProgress.filter(p => !p.isComplete).length;
+                    const completedCount = plansWithProgress.filter(p => p.isComplete).length;
+
+                    return (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setStudyPlansFilter('all')}
+                          className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                            studyPlansFilter === 'all' 
+                              ? 'bg-slate-900 text-white' 
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          All Plans ({savedPlans.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStudyPlansFilter('in_progress')}
+                          className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                            studyPlansFilter === 'in_progress' 
+                              ? 'bg-indigo-600 text-white' 
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          In Progress ({inProgressCount})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStudyPlansFilter('completed')}
+                          className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                            studyPlansFilter === 'completed' 
+                              ? 'bg-emerald-600 text-white' 
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          Completed ({completedCount})
+                        </button>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
 
               {savedPlans.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl text-xs space-y-2">
                   <p>No study plans saved yet.</p>
-                  <p>Go to <strong className="text-indigo-600 cursor-pointer" onClick={() => setActiveTab('AI Tutor')}>AI Tutor</strong> to complete an assessment and save a study plan.</p>
+                  <p>Take an assessment in <strong className="text-indigo-600 cursor-pointer hover:underline" onClick={() => setActiveTab('AI Tutor')}>AI Tutor</strong> or <strong className="text-indigo-600 cursor-pointer hover:underline" onClick={() => setActiveTab('Quizzes')}>Quizzes</strong> and save your plan.</p>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {savedPlans.map((plan) => (
-                    <div key={plan.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold text-xs text-indigo-600 font-mono truncate max-w-xs">{plan.id}</span>
-                          <span className="text-[10px] text-slate-400">● {new Date(plan.created_at).toLocaleString()}</span>
+                <div className="space-y-4">
+                  {savedPlans
+                    .filter(plan => {
+                      const total = (plan.activities || []).length;
+                      const done = (plan.activities || []).filter((a, idx) => completedActivities[`${plan.id}_${idx}`] || a.completed).length;
+                      const isComplete = total > 0 && done === total;
+                      if (studyPlansFilter === 'in_progress') return !isComplete;
+                      if (studyPlansFilter === 'completed') return isComplete;
+                      return true;
+                    })
+                    .map((plan) => {
+                      const activitiesList = plan.activities || [];
+                      const totalActs = activitiesList.length;
+                      const doneActs = activitiesList.filter((a, idx) => completedActivities[`${plan.id}_${idx}`] || a.completed).length;
+                      const pct = totalActs > 0 ? Math.round((doneActs / totalActs) * 100) : 0;
+                      const isPlanComplete = totalActs > 0 && doneActs === totalActs;
+
+                      return (
+                        <div 
+                          key={plan.id} 
+                          className={`rounded-2xl border transition-all p-5 space-y-4 shadow-xs ${
+                            isPlanComplete ? 'bg-emerald-50/40 border-emerald-200' : 'bg-white border-slate-200'
+                          }`}
+                        >
+                          {/* Plan Card Header */}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                            <div>
+                              <div className="flex items-center space-x-2 mb-1">
+                                <span className="font-mono text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">
+                                  {plan.id}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {new Date(plan.created_at).toLocaleString()}
+                                </span>
+                                {isPlanComplete && (
+                                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
+                                    All Activities Complete 🏆
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="font-bold text-sm text-slate-900">{plan.topic}</h4>
+                              <p className="text-[11px] text-slate-500">Student: {plan.student_name} ({plan.student_id})</p>
+                            </div>
+
+                            <div className="flex items-center space-x-3">
+                              <div className="text-right">
+                                <span className="text-[10px] text-slate-400 block uppercase tracking-wider font-bold">Score</span>
+                                <span className="text-sm font-extrabold text-slate-800">
+                                  {plan.score} / {plan.total_questions || 3}
+                                </span>
+                              </div>
+                              <button 
+                                onClick={() => handleReopenPlan(plan.id)} 
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-800 px-3.5 py-2 rounded-xl text-xs font-semibold shrink-0 transition"
+                              >
+                                Modal View ↗
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Activity Completion Progress Bar */}
+                          <div className="space-y-1.5 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="font-bold text-slate-700">Plan Activity Completion</span>
+                              <span className={`font-bold ${isPlanComplete ? 'text-emerald-700' : 'text-indigo-700'}`}>
+                                {doneActs} of {totalActs} Completed ({pct}%)
+                              </span>
+                            </div>
+                            <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                              <div 
+                                className={`h-2 rounded-full transition-all duration-300 ${isPlanComplete ? 'bg-emerald-500' : 'bg-indigo-600'}`} 
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Interactive Activity Checklist */}
+                          <div className="space-y-2">
+                            <h5 className="font-bold text-xs text-slate-700 uppercase tracking-wider">Activities Checklist:</h5>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              {activitiesList.map((act, idx) => {
+                                const isDone = !!completedActivities[`${plan.id}_${idx}`] || act.completed;
+                                return (
+                                  <div 
+                                    key={idx} 
+                                    className={`p-3.5 rounded-xl border transition-all flex flex-col justify-between space-y-2.5 ${
+                                      isDone ? 'bg-emerald-50/70 border-emerald-300' : 'bg-slate-50 border-slate-200'
+                                    }`}
+                                  >
+                                    <div className="space-y-1.5">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[10px] font-mono bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-bold">
+                                          {act.sectionRef || act.sectionId || "Syllabus Ref"}
+                                        </span>
+                                        {isDone && (
+                                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded-full">
+                                            Done ✓
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className={`font-bold text-xs ${isDone ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
+                                        {act.title}
+                                      </p>
+                                      <p className="text-[11px] text-slate-600 leading-relaxed">
+                                        {act.description}
+                                      </p>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleActivityCompletion(plan.id, idx, act, plan.activities)}
+                                      className={`w-full py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition ${
+                                        isDone 
+                                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white' 
+                                          : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                                      }`}
+                                    >
+                                      <span>{isDone ? '✓ Completed' : '○ Mark Complete'}</span>
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
-                        <p className="text-xs font-semibold text-slate-900">Topic: {plan.topic} | Student: {plan.student_name}</p>
-                        <p className="text-xs text-emerald-700 font-bold">Score: {plan.score}/{plan.total_questions || 3}</p>
-                        <p className="text-[11px] text-slate-500">
-                          References: {Array.isArray(plan.section_references) ? plan.section_references.join(', ') : JSON.stringify(plan.section_references)}
-                        </p>
-                      </div>
-                      <button 
-                        onClick={() => handleReopenPlan(plan.id)} 
-                        className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shrink-0 transition"
-                      >
-                        Reopen Plan
-                      </button>
-                    </div>
-                  ))}
+                      );
+                    })}
                 </div>
               )}
             </div>
@@ -1325,17 +2202,44 @@ export default function App() {
             </div>
 
             <div>
-              <h4 className="font-bold text-xs text-slate-900 mb-2">Preserved Study Activities:</h4>
-              <div className="space-y-2">
-                {(Array.isArray(reopenedPlanModal.activities) ? reopenedPlanModal.activities : []).map((act, idx) => (
-                  <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
-                    <span className="text-[10px] font-mono bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-bold">
-                      {act.sectionRef || act.sectionId || "General"}
-                    </span>
-                    <p className="font-bold text-xs text-slate-900">{act.title}</p>
-                    <p className="text-xs text-slate-600">{act.description}</p>
-                  </div>
-                ))}
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider">Preserved Study Activities:</h4>
+                <span className="text-[11px] text-slate-500">Toggle completion below</span>
+              </div>
+              <div className="space-y-2.5">
+                {(Array.isArray(reopenedPlanModal.activities) ? reopenedPlanModal.activities : []).map((act, idx) => {
+                  const isDone = !!completedActivities[`${reopenedPlanModal.id}_${idx}`] || act.completed;
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition ${
+                        isDone ? 'bg-emerald-50/70 border-emerald-300' : 'bg-slate-50 border-slate-200'
+                      }`}
+                    >
+                      <div className="space-y-1 min-w-0 flex-1">
+                        <span className="text-[10px] font-mono bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-bold">
+                          {act.sectionRef || act.sectionId || "General"}
+                        </span>
+                        <p className={`font-bold text-xs ${isDone ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
+                          {act.title}
+                        </p>
+                        <p className="text-xs text-slate-600">{act.description}</p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => toggleActivityCompletion(reopenedPlanModal.id, idx, act, reopenedPlanModal.activities)}
+                        className={`py-1.5 px-3 rounded-lg text-xs font-semibold shrink-0 transition ${
+                          isDone 
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white' 
+                            : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                        }`}
+                      >
+                        {isDone ? '✓ Completed' : '○ Mark Complete'}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

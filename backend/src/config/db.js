@@ -11,8 +11,16 @@ const pool = process.env.DATABASE_URL
       connectionString: process.env.DATABASE_URL,
       ssl: { rejectUnauthorized: false },
       connectionTimeoutMillis: 15000,
+      idleTimeoutMillis: 30000,
+      max: 10,
     })
   : null;
+
+if (pool) {
+  pool.on("error", (err) => {
+    console.warn("Unexpected pool client warning:", err.message);
+  });
+}
 
 // In-memory fallback for local testing without Neon.
 // Data here is temporary and disappears when the server restarts.
@@ -135,12 +143,16 @@ async function getPlanById(id) {
     return memoryPlans.get(id) || null;
   }
 
-  const result = await query(
-    "SELECT * FROM study_plans WHERE id = $1",
-    [id]
-  );
-
-  return result.rows[0] || null;
+  try {
+    const result = await query(
+      "SELECT * FROM study_plans WHERE id = $1",
+      [id]
+    );
+    return result.rows[0] || memoryPlans.get(id) || null;
+  } catch (err) {
+    console.warn("Neon query failed in getPlanById, falling back to memory:", err.message);
+    return memoryPlans.get(id) || null;
+  }
 }
 
 async function getAllPlans() {
@@ -150,11 +162,17 @@ async function getAllPlans() {
     );
   }
 
-  const result = await query(
-    "SELECT * FROM study_plans ORDER BY created_at DESC LIMIT 50"
-  );
-
-  return result.rows;
+  try {
+    const result = await query(
+      "SELECT * FROM study_plans ORDER BY created_at DESC LIMIT 50"
+    );
+    return result.rows;
+  } catch (err) {
+    console.warn("Neon query failed in getAllPlans, falling back to memory:", err.message);
+    return Array.from(memoryPlans.values()).sort(
+      (a, b) => new Date(b.created_at) - new Date(a.created_at)
+    );
+  }
 }
 
 async function checkConnection() {
@@ -175,6 +193,25 @@ async function checkConnection() {
   }
 }
 
+async function updatePlanActivities(id, activities) {
+  if (!pool) {
+    const plan = memoryPlans.get(id);
+    if (!plan) return null;
+    plan.activities = activities;
+    return plan;
+  }
+
+  const result = await query(
+    `UPDATE study_plans
+     SET activities = $1::jsonb
+     WHERE id = $2
+     RETURNING *`,
+    [JSON.stringify(activities), id]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function closePool() {
   if (pool) {
     await pool.end();
@@ -187,6 +224,7 @@ module.exports = {
   insertPlan,
   getPlanById,
   getAllPlans,
+  updatePlanActivities,
   checkConnection,
   closePool,
 };

@@ -126,13 +126,31 @@ const handleGetStudyPlanById = async (req, res, next) => {
   }
 };
 
+const handleUpdatePlanActivities = async (req, res, next) => {
+  try {
+    const { activities } = req.body;
+    if (!Array.isArray(activities)) {
+      return res.status(400).json({ error: "Activities must be an array." });
+    }
+    const updated = await db.updatePlanActivities(req.params.id, activities);
+    if (!updated) {
+      return res.status(404).json({ error: "Study plan not found." });
+    }
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+};
+
 app.post("/api/study-plans", handleSaveStudyPlan);
 app.get("/api/study-plans", handleGetAllStudyPlans);
 app.get("/api/study-plans/:id", handleGetStudyPlanById);
+app.patch("/api/study-plans/:id/activities", handleUpdatePlanActivities);
 
 app.post("/api/plans", handleSaveStudyPlan);
 app.get("/api/plans", handleGetAllStudyPlans);
 app.get("/api/plans/:id", handleGetStudyPlanById);
+app.patch("/api/plans/:id/activities", handleUpdatePlanActivities);
 
 // Central error handler
 app.use((err, req, res, next) => {

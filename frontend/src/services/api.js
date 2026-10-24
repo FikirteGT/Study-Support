@@ -91,6 +91,14 @@ export async function getStudyPlanById(id) {
   return request(`/api/study-plans/${encodeURIComponent(id)}`);
 }
 
+// Update activity completion status for a study plan
+export async function updatePlanActivities(id, activities) {
+  return request(`/api/study-plans/${encodeURIComponent(id)}/activities`, {
+    method: 'PATCH',
+    body: JSON.stringify({ activities })
+  });
+}
+
 // Get course materials
 export async function getMaterials() {
   return request('/api/materials');
