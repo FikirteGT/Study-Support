@@ -20,7 +20,7 @@ async function runTestSuite() {
   // -----------------------------------------------------------------
   console.log(">>> Running TC-01: 'Python list mutability and tuples'...");
   const t1_start = new Date().toISOString();
-  const t1_agent = await runAgentLoop("Python list mutability and tuples");
+  const t1_agent = await runAgentLoop("Python list mutability and tuples", { exposeAnswerKey: true });
   const t1_questions = t1_agent.questions;
   const t1_answers = {
     [t1_questions[0].id]: t1_questions[0].correctAnswer,
@@ -56,7 +56,7 @@ async function runTestSuite() {
   // -----------------------------------------------------------------
   console.log(">>> Running TC-02: 'Functions and variable scope'...");
   const t2_start = new Date().toISOString();
-  const t2_agent = await runAgentLoop("Functions and variable scope");
+  const t2_agent = await runAgentLoop("Functions and variable scope", { exposeAnswerKey: true });
   const t2_questions = t2_agent.questions;
   // Answer only first question correctly, deliberately miss question 2 and 3
   const t2_answers = {
@@ -94,7 +94,7 @@ async function runTestSuite() {
   // -----------------------------------------------------------------
   console.log(">>> Running TC-03: 'OOP classes and inheritance' & Reopen...");
   const t3_start = new Date().toISOString();
-  const t3_agent = await runAgentLoop("OOP classes and inheritance");
+  const t3_agent = await runAgentLoop("OOP classes and inheritance", { exposeAnswerKey: true });
   const t3_questions = t3_agent.questions;
   const t3_answers = {
     [t3_questions[0].id]: t3_questions[0].correctAnswer,
@@ -133,7 +133,7 @@ async function runTestSuite() {
   // -----------------------------------------------------------------
   console.log(">>> Running TC-04: 'Python' (Broad Query)...");
   const t4_start = new Date().toISOString();
-  const t4_agent = await runAgentLoop("Python");
+  const t4_agent = await runAgentLoop("Python", { exposeAnswerKey: true });
 
   results.TC04 = {
     timestamp: t4_start,
@@ -150,7 +150,7 @@ async function runTestSuite() {
   // -----------------------------------------------------------------
   console.log(">>> Running TC-05: 'SQL Joins and Relational Keys'...");
   const t5_start = new Date().toISOString();
-  const t5_agent = await runAgentLoop("SQL Joins and Relational Keys");
+  const t5_agent = await runAgentLoop("SQL Joins and Relational Keys", { exposeAnswerKey: true });
 
   results.TC05 = {
     timestamp: t5_start,

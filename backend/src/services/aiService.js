@@ -5,7 +5,7 @@
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { searchMaterial, searchMaterialDeclaration, CLARIFICATION_MESSAGE, OUT_OF_SCOPE_MESSAGE } = require("../tools/searchMaterial");
-const { demoSections, getSectionById } = require("../data/demoMaterials");
+const { sealQuiz } = require("./quizToken");
 
 // Enforce maximum 3 tool calls per execution to eliminate runaway loops (NFR-4)
 const MAX_TOOL_CALLS = 3;
@@ -137,179 +137,166 @@ const GROUNDED_FALLBACK_QUESTIONS = {
   ]
 };
 
-/**
- * Initializes Google Generative AI client if GEMINI_API_KEY is present in environment.
- * @returns {GoogleGenerativeAI|null}
- */
+const getModelName = () => process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+const QUIZ_SYSTEM = `You are an Academic Support Tutor for CS101: Introduction to Python Programming.
+1. When the student names a topic, call the search_material tool with it. Never answer from your own knowledge.
+2. If the tool result status is not "matched", reply with the single word DONE.
+3. If matched, use ONLY the returned section content to write exactly 3 multiple-choice questions with exactly 4 options each, exactly one correct.
+Reply with JSON only (no markdown): {"questions":[{"question":"...","options":["...","...","...","..."],"correctAnswer":0,"explanation":"one sentence citing the section"}]}`;
+
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey.trim() === "" || apiKey === "your_gemini_api_key_here") {
-    return null;
-  }
+  if (!apiKey || apiKey.trim() === "" || apiKey === "your_gemini_api_key_here") return null;
   return new GoogleGenerativeAI(apiKey.trim());
 }
 
-/**
- * Generates 3 MCQs grounded exclusively in the matched section using Gemini inference.
- * Falls back deterministically to grounded syllabus question bank if API call fails or quota is exceeded.
- *
- * @param {object} section - The matched syllabus section
- * @returns {Promise<Array>} Array of 3 MCQ questions
- */
-async function generateGroundedQuiz(section) {
-  const client = getGeminiClient();
+function parseJson(text) {
+  const a = text.indexOf("{"), b = text.lastIndexOf("}");
+  if (a < 0 || b <= a) throw new Error("Model reply contained no JSON object");
+  return JSON.parse(text.slice(a, b + 1));
+}
 
-  if (!client) {
-    console.log(`[AI Agent] No GEMINI_API_KEY provided; using grounded syllabus bank for ${section.id}`);
-    return GROUNDED_FALLBACK_QUESTIONS[section.id] || GROUNDED_FALLBACK_QUESTIONS["SEC-PY-101"];
-  }
-
-  const prompt = `You are an Academic Support Tutor for CS101: Introduction to Python Programming.
-Generate exactly 3 multiple-choice questions (MCQs) grounded EXCLUSIVELY in the following syllabus section.
-Do not introduce outside programming concepts or information not covered in this section text.
-
-SECTION ID: ${section.id}
-SECTION TITLE: ${section.title}
-SECTION CONTENT:
-${section.content}
-
-STRICT REQUIREMENTS:
-1. Generate exactly 3 questions (no more, no less).
-2. Each question must provide exactly 4 options.
-3. Include the 0-based integer index of the correct answer (0, 1, 2, or 3).
-4. Provide a 1-sentence explanation citing the section content.
-5. Set "sectionRef" to "${section.id}".
-6. Output ONLY a valid JSON object matching the following structure without any markdown backticks:
-{
-  "questions": [
-    {
-      "id": 1,
-      "question": "Question text here",
-      "options": ["Option 0", "Option 1", "Option 2", "Option 3"],
-      "correctAnswer": 0,
-      "explanation": "Why this is correct based on the section text.",
-      "sectionRef": "${section.id}"
-    }
-  ]
-}`;
-
-  try {
-    // Model preference: gemini-1.5-flash as specified in SRS §1.2
-    const model = client.getGenerativeModel({
-      model: "gemini-1.5-flash",
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.2
-      }
-    });
-
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
-    const parsed = JSON.parse(responseText);
-
-    if (parsed && Array.isArray(parsed.questions) && parsed.questions.length === 3) {
-      return parsed.questions.map((q, index) => ({
-        id: index + 1,
-        question: q.question,
-        options: Array.isArray(q.options) && q.options.length === 4 ? q.options : ["Option A", "Option B", "Option C", "Option D"],
-        correctAnswer: typeof q.correctAnswer === "number" && q.correctAnswer >= 0 && q.correctAnswer <= 3 ? q.correctAnswer : 0,
-        explanation: q.explanation || `Grounded in ${section.id}`,
-        sectionRef: section.id
-      }));
-    }
-
-    throw new Error("Gemini response did not contain exactly 3 valid MCQs");
-  } catch (error) {
-    console.warn(`[AI Agent] Gemini generation failed (${error.message}); falling back to grounded question bank`);
-    return GROUNDED_FALLBACK_QUESTIONS[section.id] || GROUNDED_FALLBACK_QUESTIONS["SEC-PY-101"];
-  }
+/** Strict validation: no silent repairs. Throws if the model output is not exactly 3 well-formed MCQs. */
+function validateQuestions(parsed, sectionId) {
+  const qs = parsed && parsed.questions;
+  if (!Array.isArray(qs) || qs.length !== 3) throw new Error("Expected exactly 3 questions");
+  return qs.map((q, i) => {
+    const opts = q && q.options;
+    if (!q || typeof q.question !== "string" || !q.question.trim()) throw new Error(`Question ${i + 1} has no text`);
+    if (!Array.isArray(opts) || opts.length !== 4 || !opts.every((o) => typeof o === "string" && o.trim())) throw new Error(`Question ${i + 1} needs 4 text options`);
+    if (new Set(opts.map((o) => o.trim().toLowerCase())).size !== 4) throw new Error(`Question ${i + 1} has duplicate options`);
+    if (!Number.isInteger(q.correctAnswer) || q.correctAnswer < 0 || q.correctAnswer > 3) throw new Error(`Question ${i + 1} has an invalid correctAnswer`);
+    if (typeof q.explanation !== "string" || !q.explanation.trim()) throw new Error(`Question ${i + 1} has no explanation`);
+    return { id: i + 1, question: q.question.trim(), options: opts.map((o) => o.trim()), correctAnswer: q.correctAnswer, explanation: q.explanation.trim(), sectionRef: sectionId };
+  });
 }
 
 /**
- * Bounded Agent Decision Loop (SRS §7, NFR-4).
- * Executes at most MAX_TOOL_CALLS (3) tool invocations.
- *
- * @param {string} userPrompt - Student topic or clarification answer
- * @returns {Promise<object>} Agent outcome: { status, matches, questions, message, options, toolCalls }
+ * Model-driven tool use: Gemini decides to call search_material. If the tool does not return "matched"
+ * the loop halts IN CODE (no more model turns), so guardrails cannot be talked around (NFR-4).
  */
-async function runAgentLoop(userPrompt) {
-  const toolCalls = [];
-  let toolCallCount = 0;
+async function geminiToolLoop(client, userPrompt, state) {
+  const model = client.getGenerativeModel({
+    model: getModelName(),
+    systemInstruction: QUIZ_SYSTEM,
+    tools: [{ functionDeclarations: [searchMaterialDeclaration] }],
+    generationConfig: { temperature: 0.2 },
+  });
+  const chat = model.startChat();
+  let result = await chat.sendMessage(userPrompt);
+  for (let step = 0; step < MAX_TOOL_CALLS; step++) {
+    const calls = result.response.functionCalls();
+    if (!calls || calls.length === 0) break;
+    const replies = [];
+    for (const call of calls) {
+      if (call.name !== "search_material" || state.toolCalls.length >= MAX_TOOL_CALLS) {
+        replies.push({ functionResponse: { name: call.name, response: { error: "Tool unavailable" } } });
+        continue;
+      }
+      const query = String((call.args && call.args.query) || userPrompt);
+      const out = searchMaterial(query);
+      state.searchResult = out;
+      state.toolCalls.push({ tool: "search_material", input: { query }, output: { status: out.status, matchesCount: out.matches.length }, timestamp: new Date().toISOString(), chosenBy: "model" });
+      if (out.status !== "matched") return null; // halt
+      const m = out.matches[0];
+      replies.push({ functionResponse: { name: "search_material", response: { status: "matched", id: m.id, title: m.title, content: m.content } } });
+    }
+    result = await chat.sendMessage(replies);
+  }
+  return result.response.text();
+}
+
+/** Plain JSON generation for a section (used when the model skipped the tool or the tool loop failed). Retries once. */
+async function generateQuizJson(client, section) {
+  const prompt = `You are an Academic Support Tutor for CS101: Introduction to Python Programming.
+Write exactly 3 multiple-choice questions grounded ONLY in this section. Exactly 4 options each, exactly one correct.
+SECTION ${section.id}: ${section.title}\n${section.content}
+Reply with JSON only: {"questions":[{"question":"...","options":["...","...","...","..."],"correctAnswer":0,"explanation":"one sentence citing the section"}]}`;
+  const model = client.getGenerativeModel({ model: getModelName(), generationConfig: { responseMimeType: "application/json", temperature: 0.2 } });
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await model.generateContent(prompt);
+      return validateQuestions(parseJson(r.response.text()), section.id);
+    } catch (e) { lastError = e; }
+  }
+  throw lastError;
+}
+
+const publicQuestions = (qs) => qs.map(({ id, question, options, sectionRef }) => ({ id, question, options, sectionRef }));
+
+/**
+ * Bounded agent loop (max 3 tool calls). The answer key never leaves the server: the response carries an
+ * encrypted `quizToken`; pass { exposeAnswerKey: true } only from local test scripts.
+ */
+async function runAgentLoop(userPrompt, options = {}) {
+  const state = { toolCalls: [], searchResult: null };
+  const toolCalls = state.toolCalls;
 
   if (!userPrompt || typeof userPrompt !== "string" || !userPrompt.trim()) {
-    return {
-      status: "invalid_query",
-      halt: true,
-      message: "Please enter a course topic to search for.",
-      toolCalls
-    };
+    return { status: "invalid_query", halt: true, message: "Please enter a course topic to search for.", toolCalls };
+  }
+  const prompt = userPrompt.trim().slice(0, 200);
+
+  let questions = null;
+  let source = "fallback";
+  const client = getGeminiClient();
+
+  if (client) {
+    try {
+      const text = await geminiToolLoop(client, prompt, state);
+      if (text && state.searchResult && state.searchResult.status === "matched") {
+        questions = validateQuestions(parseJson(text), state.searchResult.matches[0].id);
+        source = "gemini";
+      }
+    } catch (error) {
+      console.warn(`[AI Agent] Gemini tool loop failed (${error.message})`);
+    }
   }
 
-  // Step 1: Tool 1 - search_material
-  if (toolCallCount >= MAX_TOOL_CALLS) {
-    return {
-      status: "halted_quota",
-      halt: true,
-      message: "Agent tool invocation limit reached (bounded loop protection).",
-      toolCalls
-    };
+  // Model skipped or failed before using the tool: enforce Tool 1 in code so the guardrails always run.
+  if (!state.searchResult) {
+    state.searchResult = searchMaterial(prompt);
+    toolCalls.push({ tool: "search_material", input: { query: prompt }, output: { status: state.searchResult.status, matchesCount: state.searchResult.matches.length }, timestamp: new Date().toISOString(), chosenBy: "code" });
   }
+  const searchResult = state.searchResult;
 
-  toolCallCount++;
-  const searchResult = searchMaterial(userPrompt.trim());
-  toolCalls.push({
-    tool: "search_material",
-    input: { query: userPrompt.trim() },
-    output: { status: searchResult.status, matchesCount: searchResult.matches ? searchResult.matches.length : 0 },
-    timestamp: new Date().toISOString()
-  });
-
-  // State 1A: Prompt Clarification (FR-1.2, TC-04)
   if (searchResult.status === "clarification_needed") {
     return {
-      status: "clarification_needed",
-      halt: true,
-      message: searchResult.message || CLARIFICATION_MESSAGE,
-      options: searchResult.options || [
-        { number: 1, id: "SEC-PY-101", title: "Variables & Data Structures" },
-        { number: 2, id: "SEC-PY-102", title: "Control Flow & Functions" },
-        { number: 3, id: "SEC-PY-103", title: "Object-Oriented Programming" }
-      ],
-      toolCalls
+      status: "clarification_needed", halt: true, message: searchResult.message || CLARIFICATION_MESSAGE,
+      options: searchResult.options || [], toolCalls,
     };
   }
-
-  // State 1B: Out of Scope Guardrail (FR-1.3, TC-05)
-  if (searchResult.status === "out_of_scope" || !searchResult.matches || searchResult.matches.length === 0) {
-    return {
-      status: "out_of_scope",
-      halt: true,
-      message: searchResult.message || OUT_OF_SCOPE_MESSAGE,
-      toolCalls
-    };
+  if (searchResult.status !== "matched" || searchResult.matches.length === 0) {
+    return { status: "out_of_scope", halt: true, message: searchResult.message || OUT_OF_SCOPE_MESSAGE, toolCalls };
   }
 
-  // State 2: Generate Grounded 3-MCQ Quiz (FR-2.1-2.3, TC-01 to TC-03)
-  const matchedSection = searchResult.matches[0];
-  const questions = await generateGroundedQuiz(matchedSection);
+  const section = searchResult.matches[0];
+  if (!questions) {
+    try {
+      if (!client) throw new Error("no GEMINI_API_KEY");
+      questions = await generateQuizJson(client, section);
+      source = "gemini";
+    } catch (error) {
+      console.warn(`[AI Agent] Using grounded question bank for ${section.id} (${error.message})`);
+      questions = GROUNDED_FALLBACK_QUESTIONS[section.id];
+      source = "fallback";
+    }
+  }
 
-  return {
+  const topic = section.matchedBy === "section_reference" ? section.title : prompt;
+  const sectionInfo = { id: section.id, number: section.number, title: section.title };
+  const response = {
     status: "matched",
     halt: false,
-    section: {
-      id: matchedSection.id,
-      number: matchedSection.number,
-      title: matchedSection.title,
-      summary: matchedSection.content ? matchedSection.content.slice(0, 150) + "..." : ""
-    },
-    questions,
-    toolCalls
+    section: { ...sectionInfo, summary: section.content ? section.content.slice(0, 150) + "..." : "" },
+    questions: options.exposeAnswerKey ? questions : publicQuestions(questions),
+    quizToken: sealQuiz({ topic, section: sectionInfo, questions }),
+    source,
+    toolCalls,
   };
+  return response;
 }
 
-module.exports = {
-  runAgentLoop,
-  generateGroundedQuiz,
-  MAX_TOOL_CALLS,
-  GROUNDED_FALLBACK_QUESTIONS
-};
+module.exports = { runAgentLoop, validateQuestions, MAX_TOOL_CALLS, GROUNDED_FALLBACK_QUESTIONS };

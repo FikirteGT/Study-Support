@@ -130,6 +130,17 @@ async function getPlanById(id) {
   return result.rows[0] || null;
 }
 
+async function listRecentPlans(limit = 10) {
+  const n = Math.min(Math.max(Number(limit) || 10, 1), 50);
+  if (!pool) return [...memoryPlans.values()].reverse().slice(0, n);
+  const result = await query(
+    `SELECT id, student_id, student_name, topic, score, total_questions, created_at
+     FROM study_plans ORDER BY created_at DESC LIMIT $1`,
+    [n]
+  );
+  return result.rows;
+}
+
 async function checkConnection() {
   if (!pool) {
     console.log("Database is not configured.");
@@ -159,6 +170,7 @@ module.exports = {
   getMaterials,
   insertPlan,
   getPlanById,
+  listRecentPlans,
   checkConnection,
   closePool,
 };

@@ -1,39 +1,39 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { api } from './api';
 
-// --- TEAM DEMO DATA ---
+// --- COURSE SECTIONS (match backend/src/data/demoMaterials.js) ---
+const STUDENT = { id: 'PY-2026-01', name: 'Jordan Lee' };
 const DEMO_TEACHING_MATERIAL = [
-  { 
-    id: "SEC_PY_01", 
-    title: "1. Python Lists & Mutability", 
-    content: "Lists in Python are ordered, mutable collections defined with square brackets []. Elements can be modified in-place.",
+  {
+    id: "SEC-PY-101",
+    title: "1. Variables, Dynamic Typing & Core Data Structures",
+    content: "Dynamic typing, lists vs tuples (mutable vs immutable) and dictionaries as key-value pairs.",
     image: "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=500&auto=format&fit=crop&q=60"
   },
-  { 
-    id: "SEC_PY_02", 
-    title: "2. Python Tuples & Immutability", 
-    content: "Tuples are ordered, immutable sequences enclosed in parentheses (). Once created, their elements cannot be changed.",
+  {
+    id: "SEC-PY-102",
+    title: "2. Control Flow, Loops & Functions",
+    content: "Indentation, if/elif/else, for and while loops, defining functions, return values and LEGB scope.",
     image: "https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=500&auto=format&fit=crop&q=60"
   },
-  { 
-    id: "SEC_PY_03", 
-    title: "3. Python Dictionaries", 
-    content: "Dictionaries store data in unordered key-value pairs using curly braces {}. Keys must be unique and immutable.",
+  {
+    id: "SEC-PY-103",
+    title: "3. Object-Oriented Programming (OOP) in Python",
+    content: "Classes and instances, __init__, self, inheritance and super().",
     image: "https://images.unsplash.com/photo-1515879218367-8466d910aaa4?w=500&auto=format&fit=crop&q=60"
   }
 ];
 
-const savedPlansDB = [];
-
 export default function App() {
   const [authStage, setAuthStage] = useState('login');
-  const [studentIdInput, setStudentIdInput] = useState('STU_101');
+  const [studentIdInput, setStudentIdInput] = useState('PY-2026-01');
   const [passwordInput, setPasswordInput] = useState('••••••••');
   
   const [activeTab, setActiveTab] = useState('Welcome');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
-  const [topic, setTopic] = useState('Python Lists');
-  const [matchingSections, setMatchingSections] = useState([DEMO_TEACHING_MATERIAL[0]]);
+  const [topic, setTopic] = useState('');
+  const [matchingSections, setMatchingSections] = useState([]);
   const [scopeWarning, setScopeWarning] = useState('');
   const [clarificationPrompt, setClarificationPrompt] = useState('');
   
@@ -44,6 +44,42 @@ export default function App() {
   
   const [inspectorLogs, setInspectorLogs] = useState([]);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+
+  // Backend-driven state
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [clarificationOptions, setClarificationOptions] = useState([]);
+  const [quizToken, setQuizToken] = useState(null);
+  const [quizSource, setQuizSource] = useState('');
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedPlans, setSavedPlans] = useState([]);
+  const [openPlan, setOpenPlan] = useState(null);
+  const [serverState, setServerState] = useState('checking');
+
+  const loadPlans = async () => {
+    try {
+      const data = await api.listPlans();
+      setSavedPlans(data.plans || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => {
+    let finished = false;
+    const timer = setTimeout(() => { if (!finished) setServerState('waking'); }, 2500);
+    api.health()
+      .then(() => setServerState('ready'))
+      .catch(() => setServerState('down'))
+      .finally(() => { finished = true; clearTimeout(timer); });
+    loadPlans();
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'Study Plans' || activeTab === 'Dashboard') loadPlans();
+  }, [activeTab]);
 
   const logInspector = (toolName, payload, response) => {
     setInspectorLogs(prev => [
@@ -59,105 +95,109 @@ export default function App() {
     logInspector('student_login', { studentId: studentIdInput }, { status: 'Authenticated' });
   };
 
-  // TOOL 1: search_material with Ambiguity & Out-of-Scope Checks
-  const handleSearch = (e) => {
+  const studentAnswersPayload = () =>
+    Object.fromEntries(quizData.map((q, i) => [q.id, userAnswers[i]]));
+
+  // TOOL 1 + quiz generation: POST /api/agent/prompt (the agent searches the syllabus, then writes 3 MCQs)
+  const handleSearch = async (e) => {
     if (e) e.preventDefault();
-    setScopeWarning('');
-    setClarificationPrompt('');
-    setQuizData(null);
-    setScoreResult(null);
-    setStudyPlan(null);
+    if (loading) return;
+    setError(''); setNotice(''); setScopeWarning(''); setClarificationPrompt(''); setClarificationOptions([]);
+    setQuizData(null); setScoreResult(null); setStudyPlan(null); setQuizToken(null); setMatchingSections([]);
 
-    const q = topic.toLowerCase().trim();
+    const q = topic.trim();
+    if (!q) { setError('Please enter a course topic.'); return; }
 
-    // 1. Check for ambiguous / vague topics
-    const vagueKeywords = ['python', 'data', 'structure', 'code', 'basics'];
-    if (vagueKeywords.includes(q)) {
-      const msg = "Your request is too broad. Please clarify your topic: Are you interested in Python Lists, Tuples, or Dictionaries?";
-      setClarificationPrompt(msg);
-      logInspector('search_material', { topic }, { status: 'Needs Clarification', message: msg });
-      return;
+    setLoading(true);
+    try {
+      const out = await api.prompt(q);
+      (out.toolCalls || []).forEach(c => logInspector(c.tool, c.input, c.output));
+
+      if (out.status === 'clarification_needed') {
+        setClarificationPrompt(out.message);
+        setClarificationOptions(out.options || []);
+      } else if (out.status === 'out_of_scope') {
+        setScopeWarning(out.message);
+      } else if (out.status === 'matched') {
+        const image = DEMO_TEACHING_MATERIAL.find(m => m.id === out.section.id)?.image;
+        setMatchingSections([{ ...out.section, image }]);
+        setQuizData(out.questions);
+        setQuizToken(out.quizToken);
+        setQuizSource(out.source);
+        setUserAnswers({});
+        logInspector('generate_quiz', { sectionId: out.section.id }, { questions: out.questions.length, source: out.source });
+      } else {
+        setError(out.message || 'Unexpected response from the agent.');
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-
-    // 2. Search demo material
-    const results = DEMO_TEACHING_MATERIAL.filter(sec => 
-      sec.title.toLowerCase().includes(q) || sec.content.toLowerCase().includes(q)
-    );
-
-    logInspector('search_material', { topic }, { matchesCount: results.length });
-
-    // 3. Handle out-of-scope topics
-    if (results.length === 0) {
-      setScopeWarning(`Topic "${topic}" falls outside our team demo material. Available topics: Python Lists, Tuples, Dictionaries.`);
-      setMatchingSections([]);
-      return;
-    }
-
-    setMatchingSections(results);
-    generateQuiz();
   };
 
-  // Generate 3-question MCQ Quiz based on material
-  const generateQuiz = () => {
-    const generated = [
-      { id: 1, question: "Which syntax defines a mutable sequence in Python?", options: ["Square brackets []", "Parentheses ()", "Curly braces {}", "Angle brackets <>"], answerIndex: 0, sectionId: "SEC_PY_01" },
-      { id: 2, question: "Which property distinguishes Tuples from Lists?", options: ["Ordering", "Immutability", "Indexing support", "Length restriction"], answerIndex: 1, sectionId: "SEC_PY_02" },
-      { id: 3, question: "What data pairing format is used by Dictionaries?", options: ["Value-Index", "Key-Value", "Tuple-Set", "Header-Body"], answerIndex: 1, sectionId: "SEC_PY_03" }
-    ];
-    setQuizData(generated);
-    setUserAnswers({});
-    logInspector('generate_quiz', { topic }, { quizLength: generated.length });
+  const chooseSection = (option) => {
+    setTopic(`Section ${option.number}`);
+    setTimeout(() => document.getElementById('topic-form')?.requestSubmit(), 0);
   };
 
   const handleOptionSelect = (qIdx, oIdx) => {
     setUserAnswers(prev => ({ ...prev, [qIdx]: oIdx }));
   };
 
-  // TOOL 2: check_assessment (Calculated strictly in app code) & Generate Study Plan
-  const handleSubmitQuiz = () => {
-    if (!quizData) return;
-
-    const answerKey = quizData.map(q => q.answerIndex);
-    const formattedAnswers = quizData.map((_, idx) => userAnswers[idx] ?? -1);
-
-    let score = 0;
-    const breakdown = formattedAnswers.map((ans, idx) => {
-      const isCorrect = ans === answerKey[idx];
-      if (isCorrect) score++;
-      return { questionIndex: idx + 1, userAnswer: ans, correctAnswer: answerKey[idx], passed: isCorrect };
-    });
-
-    const percentage = Math.round((score / answerKey.length) * 100);
-    const scoreData = { score, total: answerKey.length, percentage: `${percentage}%`, breakdown };
-    
-    setScoreResult(scoreData);
-    logInspector('check_assessment', { userAnswers: formattedAnswers, answerKey }, scoreData);
-
-    // Generate recommendations/study plan based on results
-    const activities = [
-      { title: "1. Review List Mutability", sectionId: "SEC_PY_01", description: "Practice modifying elements inside square brackets []." },
-      { title: "2. Master Tuple Safety", sectionId: "SEC_PY_02", description: "Learn when to use immutable tuples () to protect states." },
-      { title: "3. Dictionary Key-Value Mapping", sectionId: "SEC_PY_03", description: "Build structured lookups using curly braces {}." }
-    ];
-    setStudyPlan(activities);
-    logInspector('propose_study_plan', { score: scoreData.percentage }, { activities });
+  // TOOL 2: POST /api/assess (scored on the server; the browser never sees the answer key)
+  const handleSubmitQuiz = async () => {
+    if (!quizData || loading) return;
+    if (quizData.some((_, i) => userAnswers[i] === undefined)) {
+      setError('Answer all 3 questions before submitting.');
+      return;
+    }
+    setError(''); setLoading(true);
+    try {
+      const studentAnswers = studentAnswersPayload();
+      const r = await api.assess(quizToken, studentAnswers);
+      setScoreResult({ ...r, percentage: `${Math.round((r.score / r.total) * 100)}%` });
+      setStudyPlan(r.activities);
+      logInspector('check_assessment', { studentAnswers }, { score: r.score, total: r.total, mistakes: r.mistakes });
+      logInspector('propose_study_plan', { score: `${r.score}/${r.total}` }, { activities: r.activities.length });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // TOOL 3: save_study_plan
-  const handleSavePlan = () => {
-    const newPlan = {
-      planId: `PLAN_${Date.now().toString().slice(-4)}`,
-      studentId: "STU_101",
-      studentName: "Alex Kim",
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      score: scoreResult.percentage,
-      rawScore: `${scoreResult.score}/${scoreResult.total}`,
-      activities: studyPlan,
-      sourceReferences: quizData.map(q => q.sectionId)
-    };
-    savedPlansDB.unshift(newPlan);
-    logInspector('save_study_plan', { score: scoreResult.percentage }, newPlan);
-    alert(`Study Plan Successfully Saved!\nPlan ID: ${newPlan.planId}`);
+  // TOOL 3: POST /api/plans (only after the student presses Confirm in the modal)
+  const handleConfirmSave = async () => {
+    setSaving(true); setError('');
+    try {
+      const r = await api.savePlan({
+        confirmed: true,
+        studentId: STUDENT.id,
+        studentName: STUDENT.name,
+        quizToken,
+        studentAnswers: studentAnswersPayload(),
+      });
+      logInspector('save_study_plan', { confirmed: true }, { planId: r.planId });
+      setShowConfirm(false);
+      setNotice(`Study plan saved to the remote database. Plan ID: ${r.planId}`);
+      await loadPlans();
+    } catch (err) {
+      setShowConfirm(false);
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReopen = async (id) => {
+    try {
+      const data = await api.getPlan(id);
+      setOpenPlan(data.plan);
+      logInspector('reopen_plan', { id }, { score: data.plan.score });
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   const navItems = [
@@ -208,7 +248,7 @@ export default function App() {
           </form>
 
           <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-700/50 text-[11px] text-slate-400 text-center">
-            Demo Student Profile: <span className="text-indigo-400 font-mono">Alex Kim (STU_101)</span>
+            Demo Student Profile: <span className="text-indigo-400 font-mono">Jordan Lee (PY-2026-01)</span>
           </div>
         </div>
       </div>
@@ -281,8 +321,8 @@ export default function App() {
               className="w-9 h-9 rounded-full object-cover border-2 border-indigo-500 shrink-0"
             />
             <div className="overflow-hidden min-w-0">
-              <p className="text-xs font-bold text-white truncate">Alex Kim</p>
-              <p className="text-[10px] text-slate-400 font-mono truncate">ID: STU_101</p>
+              <p className="text-xs font-bold text-white truncate">Jordan Lee</p>
+              <p className="text-[10px] text-slate-400 font-mono truncate">ID: PY-2026-01</p>
             </div>
           </div>
           <button 
@@ -338,7 +378,7 @@ export default function App() {
                   <span className="inline-block bg-indigo-500/30 text-indigo-200 text-[10px] font-bold px-3 py-1 rounded-md uppercase tracking-wider">
                     Welcome to Your Portal
                   </span>
-                  <h3 className="text-xl sm:text-2xl font-black">Hello, Alex Kim!</h3>
+                  <h3 className="text-xl sm:text-2xl font-black">Hello, Jordan Lee!</h3>
                   <p className="text-xs text-indigo-100 max-w-lg leading-relaxed">
                     Your AI Academic Support Agent is ready to evaluate your knowledge on course topics, generate targeted quizzes, and build personalized study plans based on team demo materials.
                   </p>
@@ -387,12 +427,12 @@ export default function App() {
                   <span className="text-xs text-slate-400 font-mono">search_material</span>
                 </div>
 
-                <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 mb-4">
+                <form id="topic-form" onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 mb-4">
                   <input 
                     type="text" 
                     value={topic}
                     onChange={(e) => setTopic(e.target.value)}
-                    placeholder="e.g., Python Lists, Tuples, Dictionaries" 
+                    placeholder="e.g., Python list mutability and tuples" 
                     className="w-full flex-1 px-4 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-600 bg-white"
                   />
                   <button type="submit" className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-sm font-semibold transition shadow-md shrink-0">
@@ -400,6 +440,24 @@ export default function App() {
                   </button>
                 </form>
 
+                {serverState === 'waking' && (
+                  <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl text-xs text-sky-800 mb-4">Waking up the server (free hosting sleeps when idle). This can take up to a minute.</div>
+                )}
+                {serverState === 'down' && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 mb-4">The API is not reachable. Check VITE_API_URL and that the backend is running.</div>
+                )}
+                {loading && <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 mb-4">Working…</div>}
+                {error && <div role="alert" className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 mb-4">{error}</div>}
+                {notice && <div role="status" className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 mb-4">{notice}</div>}
+                {clarificationOptions.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {clarificationOptions.map(o => (
+                      <button key={o.id} type="button" onClick={() => chooseSection(o)} className="px-3 py-1.5 text-xs font-semibold bg-white border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50">
+                        Section {o.number}: {o.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {/* Clarification prompt for ambiguous topic */}
                 {clarificationPrompt && (
                   <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 mb-4 flex items-start space-x-2">
@@ -442,7 +500,7 @@ export default function App() {
                 <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
                   <div className="flex items-center justify-between border-b pb-3 border-slate-100">
                     <h3 className="text-sm sm:text-base font-bold text-slate-900">2. Knowledge Assessment Quiz</h3>
-                    <span className="text-xs text-slate-400 font-mono">check_assessment</span>
+                    <span className="text-xs text-slate-400 font-mono">check_assessment{quizSource === 'fallback' ? ' · offline question bank' : quizSource === 'gemini' ? ' · generated by Gemini' : ''}</span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -493,7 +551,7 @@ export default function App() {
                     {studyPlan.map((act, i) => (
                       <div key={i} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded font-mono font-bold">Ref: {act.sectionId}</span>
+                          <span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded font-mono font-bold">Ref: {act.sectionRef}</span>
                         </div>
                         <p className="font-bold text-xs text-slate-900">{act.title}</p>
                         <p className="text-[11px] text-slate-500 leading-relaxed">{act.description}</p>
@@ -501,8 +559,18 @@ export default function App() {
                     ))}
                   </div>
 
+                  <div className="space-y-2">
+                    {scoreResult.results.map((r, i) => (
+                      <div key={r.id} className={`p-3 rounded-xl border text-xs ${r.correct ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-red-50 border-red-200 text-red-900'}`}>
+                        <p className="font-semibold">{r.correct ? '✓ Correct' : '✗ Incorrect'}: {i + 1}. {r.question}</p>
+                        {!r.correct && <p className="mt-1">Your answer: {r.options[r.chosenIndex]} · Correct: {r.options[r.correctIndex]}</p>}
+                        <p className="mt-1 opacity-80">{r.explanation} <span className="font-mono">[{r.sectionRef}]</span></p>
+                      </div>
+                    ))}
+                  </div>
+
                   <div className="pt-2 flex justify-end">
-                    <button onClick={handleSavePlan} className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-xs font-bold transition shadow-md">
+                    <button onClick={() => setShowConfirm(true)} className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-xs font-bold transition shadow-md">
                       Confirm & Save Study Plan
                     </button>
                   </div>
@@ -527,14 +595,14 @@ export default function App() {
                   <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl text-2xl shrink-0">🎯</div>
                   <div className="min-w-0">
                     <p className="text-xs text-slate-500 font-medium">Last Quiz Score</p>
-                    <p className="text-base sm:text-lg font-bold text-slate-900">{scoreResult ? scoreResult.percentage : '66%'}</p>
+                    <p className="text-base sm:text-lg font-bold text-slate-900">{scoreResult ? scoreResult.percentage : '-'}</p>
                   </div>
                 </div>
                 <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 flex items-center space-x-4 shadow-xs sm:col-span-2 md:col-span-1">
                   <div className="p-3 bg-amber-100 text-amber-600 rounded-xl text-2xl shrink-0">💾</div>
                   <div className="min-w-0">
                     <p className="text-xs text-slate-500 font-medium">Saved Study Plans</p>
-                    <p className="text-base sm:text-lg font-bold text-slate-900">{savedPlansDB.length} Plans</p>
+                    <p className="text-base sm:text-lg font-bold text-slate-900">{savedPlans.length} Plans</p>
                   </div>
                 </div>
               </div>
@@ -567,7 +635,7 @@ export default function App() {
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <p className="font-bold text-xs text-slate-900">Python Data Structures Quiz (3 Questions)</p>
-                  <p className="text-[11px] text-slate-500">Covers SEC_PY_01, SEC_PY_02, SEC_PY_03</p>
+                  <p className="text-[11px] text-slate-500">Covers SEC-PY-101, SEC-PY-102, SEC-PY-103</p>
                 </div>
                 <button onClick={() => setActiveTab('AI Tutor')} className="w-full sm:w-auto bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0">
                   Start Quiz
@@ -580,7 +648,7 @@ export default function App() {
           {activeTab === 'Progress' && (
             <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
               <h3 className="text-base font-bold text-slate-900">Student Progress Metrics</h3>
-              <p className="text-xs text-slate-500 font-medium">Student: Alex Kim (STU_101)</p>
+              <p className="text-xs text-slate-500 font-medium">Student: Jordan Lee (PY-2026-01)</p>
               <div className="p-4 bg-emerald-50 text-emerald-800 rounded-xl border border-emerald-200 text-xs">
                 ✅ Completed topic assessment on <strong>Python Basics</strong>.
               </div>
@@ -593,28 +661,25 @@ export default function App() {
               <div className="flex justify-between items-center border-b pb-3 border-slate-100">
                 <div>
                   <h3 className="text-base font-bold text-slate-900">Saved Study Plans</h3>
-                  <p className="text-xs text-slate-500">Reopen confirmed plans saved via save_study_plan tool.</p>
+                  <p className="text-xs text-slate-500">Latest plans stored in the remote database. Reopen one to load it from the database.</p>
                 </div>
-                <span className="text-xs font-mono bg-slate-100 px-2.5 py-1 rounded-md font-bold">{savedPlansDB.length} Total</span>
+                <span className="text-xs font-mono bg-slate-100 px-2.5 py-1 rounded-md font-bold">{savedPlans.length} Total</span>
               </div>
-
-              {savedPlansDB.length === 0 ? (
+              {error && <div role="alert" className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">{error}</div>}
+              {savedPlans.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl text-xs">
-                  No plans confirmed yet. Go to <strong className="text-indigo-600 cursor-pointer" onClick={() => setActiveTab('AI Tutor')}>AI Tutor</strong> to take an assessment and save your plan.
+                  No plans saved yet. Go to <strong className="text-indigo-600 cursor-pointer" onClick={() => setActiveTab('AI Tutor')}>AI Tutor</strong> to take an assessment and save your plan.
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {savedPlansDB.map((plan) => (
-                    <div key={plan.planId} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold text-xs text-indigo-600">{plan.planId}</span>
-                          <span className="text-[10px] text-slate-400">● Saved at {plan.timestamp}</span>
-                        </div>
-                        <p className="text-xs font-semibold text-slate-900">Score Achieved: {plan.score} ({plan.rawScore})</p>
-                        <p className="text-[11px] text-slate-500">References: {plan.sourceReferences.join(', ')}</p>
+                  {savedPlans.map((plan) => (
+                    <div key={plan.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="space-y-1 min-w-0">
+                        <p className="text-xs font-semibold text-slate-900 truncate">{plan.topic}</p>
+                        <p className="text-[11px] text-slate-500">Score {plan.score}/{plan.total_questions} · {plan.student_name} · {new Date(plan.created_at).toLocaleString()}</p>
+                        <p className="font-mono text-[10px] text-indigo-600">{plan.id}</p>
                       </div>
-                      <button onClick={() => alert(`Reopened Plan ${plan.planId}:\n\n${plan.activities.map(a => a.title).join('\n')}`)} className="w-full sm:w-auto bg-slate-200 hover:bg-slate-300 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0">
+                      <button onClick={() => handleReopen(plan.id)} className="w-full sm:w-auto bg-slate-200 hover:bg-slate-300 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0">
                         Reopen Plan
                       </button>
                     </div>
@@ -626,6 +691,45 @@ export default function App() {
 
         </main>
       </div>
+
+      {/* CONFIRMATION MODAL (FR-5: nothing is saved until the student confirms) */}
+      {showConfirm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-label="Confirm save">
+          <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-slate-900">Save this study plan?</h3>
+            <p className="text-xs text-slate-600">Score {scoreResult?.score}/{scoreResult?.total} and the 3 recommended activities will be stored in the remote database for {STUDENT.name} ({STUDENT.id}).</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowConfirm(false)} disabled={saving} className="px-4 py-2 text-xs font-semibold rounded-xl bg-slate-100 text-slate-700">Cancel</button>
+              <button onClick={handleConfirmSave} disabled={saving} className="px-4 py-2 text-xs font-bold rounded-xl bg-indigo-600 text-white disabled:opacity-60">{saving ? 'Saving…' : 'Confirm & Save'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REOPENED PLAN MODAL */}
+      {openPlan && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-label="Saved study plan">
+          <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex justify-between items-start gap-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">{openPlan.topic}</h3>
+                <p className="text-xs text-slate-500">Score {openPlan.score}/{openPlan.total_questions} · saved {new Date(openPlan.created_at).toLocaleString()} · <span className="font-mono">{openPlan.id}</span></p>
+              </div>
+              <button onClick={() => setOpenPlan(null)} className="text-slate-400 hover:text-slate-700 text-xl font-bold" aria-label="Close">&times;</button>
+            </div>
+            <p className="text-[11px] text-slate-500">References: {(openPlan.section_references || []).join(', ')}</p>
+            <div className="space-y-3">
+              {(openPlan.activities || []).map((a, i) => (
+                <div key={i} className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <p className="font-bold text-xs text-slate-900">{a.title}</p>
+                  <p className="text-[11px] text-slate-600 mt-1">{a.description}</p>
+                  {a.sectionRef && <span className="inline-block mt-2 text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded font-mono font-bold">Ref: {a.sectionRef}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* INSPECTOR MODAL */}
       {isInspectorOpen && (
