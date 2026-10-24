@@ -174,6 +174,8 @@ function checkAssessment(studentAnswers = {}, questions = []) {
       studentAns !== undefined &&
       studentAns !== null &&
       (studentAns === q.correctAnswer ||
+        (Array.isArray(q.options) && typeof q.correctAnswer === 'number' && (studentAns === q.options[q.correctAnswer] || String(studentAns).trim().toLowerCase() === String(q.options[q.correctAnswer]).trim().toLowerCase())) ||
+        (Array.isArray(q.options) && typeof studentAns === 'number' && (q.options[studentAns] === q.correctAnswer || String(q.options[studentAns]).trim().toLowerCase() === String(q.correctAnswer).trim().toLowerCase())) ||
         (typeof studentAns === 'string' &&
           typeof q.correctAnswer === 'string' &&
           studentAns.trim().toLowerCase() === q.correctAnswer.trim().toLowerCase()));

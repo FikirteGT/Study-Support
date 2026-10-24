@@ -38,6 +38,14 @@ export async function searchMaterial(query) {
   return request(`/api/materials/search?query=${encodeURIComponent(query)}`);
 }
 
+// AI Agent Prompt: Executes Bounded Tool Loop + Grounded 3-MCQ Generation (Gemini 1.5 Flash)
+export async function promptAgent(topic) {
+  return request('/api/agent/prompt', {
+    method: 'POST',
+    body: JSON.stringify({ topic })
+  });
+}
+
 // Tool 2: Knowledge Assessment Evaluation (Application code scoring)
 export async function evaluateAssessment(payload) {
   // Try /api/assess first (compatible with both deployed Render and local), fallback to /api/assessment/evaluate

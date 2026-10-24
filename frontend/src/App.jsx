@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   searchMaterial,
+  promptAgent,
   evaluateAssessment,
   saveStudyPlan,
   getStudyPlans,
@@ -169,7 +170,7 @@ export default function App() {
     }
   };
 
-  // TOOL 1: search_material via Express backend
+  // TOOL 1 & AI Agent Prompt: Run bounded agent loop with Gemini dynamic 3-MCQ generation
   const handleSearch = async (e, customQuery) => {
     if (e) e.preventDefault();
     const queryToSearch = customQuery || topic;
@@ -184,8 +185,9 @@ export default function App() {
     setIsSearching(true);
 
     try {
-      const data = await searchMaterial(queryToSearch);
-      logInspector('search_material', { query: queryToSearch }, data);
+      // First attempt: Call AI Agent loop with Gemini-powered dynamic 3-MCQ generation
+      const data = await promptAgent(queryToSearch);
+      logInspector('agent_prompt', { query: queryToSearch }, data);
 
       if (data.status === 'clarification_needed') {
         setClarificationPrompt(data.message);
@@ -195,12 +197,37 @@ export default function App() {
         setScopeWarning(data.message || `Topic "${queryToSearch}" is outside our Python syllabus.`);
         setMatchingSections([]);
       } else if (data.status === 'matched') {
-        setMatchingSections(data.matches || []);
-        const primarySecId = data.matches[0]?.id || "SEC-PY-101";
-        buildQuizForSection(primarySecId);
+        const matches = data.matches || (data.section ? [data.section] : []);
+        setMatchingSections(matches);
+        if (data.questions && data.questions.length > 0) {
+          setQuizData(data.questions);
+          setUserAnswers({});
+          logInspector('gemini_quiz_generated', { section: data.section?.id }, { count: data.questions.length });
+        } else {
+          buildQuizForSection(data.section?.id || "SEC-PY-101");
+        }
       }
-    } catch (err) {
-      setScopeWarning(`Error connecting to backend (${API_BASE}): ${err.message}. Make sure backend is running.`);
+    } catch (agentErr) {
+      console.warn("Agent prompt failed, attempting direct search_material fallback:", agentErr);
+      try {
+        const data = await searchMaterial(queryToSearch);
+        logInspector('search_material_fallback', { query: queryToSearch }, data);
+
+        if (data.status === 'clarification_needed') {
+          setClarificationPrompt(data.message);
+          setClarificationOptions(data.options || []);
+          setMatchingSections([]);
+        } else if (data.status === 'out_of_scope') {
+          setScopeWarning(data.message || `Topic "${queryToSearch}" is outside our Python syllabus.`);
+          setMatchingSections([]);
+        } else if (data.status === 'matched') {
+          setMatchingSections(data.matches || []);
+          const primarySecId = data.matches[0]?.id || "SEC-PY-101";
+          buildQuizForSection(primarySecId);
+        }
+      } catch (err) {
+        setScopeWarning(`Error connecting to backend (${API_BASE}): ${err.message}. Make sure backend is running.`);
+      }
     } finally {
       setIsSearching(false);
     }
@@ -210,7 +237,7 @@ export default function App() {
     const questions = QUESTION_BANK[sectionId] || QUESTION_BANK["SEC-PY-101"];
     setQuizData(questions);
     setUserAnswers({});
-    logInspector('generate_quiz', { sectionId }, { questionsCount: questions.length });
+    logInspector('generate_quiz_fallback', { sectionId }, { questionsCount: questions.length });
   };
 
   const handleOptionSelect = (qId, optionText) => {
@@ -228,6 +255,7 @@ export default function App() {
       studentAnswers: userAnswers,
       questions: quizData.map(q => ({
         id: q.id,
+        options: q.options,
         correctAnswer: q.correctAnswer,
         sectionRef: q.sectionRef
       }))

@@ -5,6 +5,7 @@ const cors = require("cors");
 const db = require("./config/db");
 const assessmentRoutes = require("./routes/assessmentRoutes");
 const materialRoutes = require("./routes/materialRoutes");
+const agentRoutes = require("./routes/agentRoutes");
 
 const app = express();
 
@@ -31,6 +32,9 @@ app.get("/health", async (req, res) => {
 
 // Tool 1: Material search & Course Materials
 app.use("/api/materials", materialRoutes);
+
+// AI Agent Prompt loop & Dynamic Assessment Generation
+app.use("/api/agent", agentRoutes);
 
 app.get("/api/materials", async (req, res, next) => {
   try {
