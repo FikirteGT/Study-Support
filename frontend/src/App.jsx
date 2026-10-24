@@ -102,6 +102,7 @@ export default function App() {
   // Topic search state (Tool 1)
   const [topic, setTopic] = useState('Python list mutability and tuples');
   const [matchingSections, setMatchingSections] = useState([]);
+  const [expandedSections, setExpandedSections] = useState({});
   const [scopeWarning, setScopeWarning] = useState('');
   const [clarificationPrompt, setClarificationPrompt] = useState('');
   const [clarificationOptions, setClarificationOptions] = useState([]);
@@ -168,6 +169,7 @@ export default function App() {
     setScopeWarning('');
     setClarificationPrompt('');
     setClarificationOptions([]);
+    setExpandedSections({});
     setQuizData(null);
     setScoreResult(null);
     setStudyPlan(null);
@@ -227,6 +229,13 @@ export default function App() {
 
   const handleOptionSelect = (qId, optionText) => {
     setUserAnswers(prev => ({ ...prev, [qId]: optionText }));
+  };
+
+  const toggleSectionExpand = (secId) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [secId]: !prev[secId]
+    }));
   };
 
   // TOOL 2: check_assessment via Express backend (Deterministic Scoring)
@@ -531,16 +540,48 @@ export default function App() {
 
                 {matchingSections.length > 0 && (
                   <div className="grid grid-cols-1 gap-3">
-                    {matchingSections.map(sec => (
-                      <div key={sec.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] text-indigo-700 bg-indigo-100 font-mono font-bold px-2 py-0.5 rounded">{sec.id}</span>
-                          <span className="text-[10px] text-slate-400 font-mono">Section {sec.number}</span>
+                    {matchingSections.map(sec => {
+                      const isExpanded = !!expandedSections[sec.id];
+                      const text = sec.content || sec.summary || '';
+                      const isLong = text.length > 180;
+
+                      return (
+                        <div key={sec.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 transition-all">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-indigo-700 bg-indigo-100 font-mono font-bold px-2 py-0.5 rounded">{sec.id}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">Section {sec.number}</span>
+                          </div>
+                          <p className="font-bold text-sm text-slate-900">{sec.title}</p>
+                          <div className="text-xs text-slate-600 leading-relaxed">
+                            {isLong && !isExpanded ? (
+                              <p>
+                                {text.slice(0, 180)}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSectionExpand(sec.id)}
+                                  className="text-indigo-600 font-bold hover:text-indigo-800 ml-1.5 inline-flex items-center cursor-pointer focus:outline-none"
+                                >
+                                  ...more
+                                </button>
+                              </p>
+                            ) : (
+                              <p>
+                                {text}
+                                {isLong && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSectionExpand(sec.id)}
+                                    className="text-indigo-600 font-bold hover:text-indigo-800 ml-1.5 inline-flex items-center cursor-pointer focus:outline-none text-[11px]"
+                                  >
+                                    (show less)
+                                  </button>
+                                )}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                        <p className="font-bold text-sm text-slate-900">{sec.title}</p>
-                        <p className="text-xs text-slate-600 line-clamp-3 leading-relaxed">{sec.content}</p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
